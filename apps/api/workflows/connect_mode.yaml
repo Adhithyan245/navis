@@ -1,0 +1,105 @@
+# Navis workflow: connect_mode
+#
+# "What's happening?" — surfaces events and meetups near an anchor. Events
+# are the primary signal; venue places come along as secondary context for
+# "where is this event actually held" style follow-ups.
+
+workflow: connect_mode
+version: "1.0"
+metadata:
+  description: "Find events and meetups near a query"
+  section_kind: events
+  tags: [events, networking, social]
+
+nodes:
+  - id: retrieve_context
+    type: context_retrieval
+    config:
+      workflow: connect_mode
+      tags: [events, networking, social, meetup]
+      limit: 5
+
+  - id: geo_search
+    type: provider
+    timeout_s: 15.0   # includes the place → city fallback chain
+    retries: 1
+    config:
+      provider: geo
+      args:
+        query: ${ctx.query}
+        # Fallback anchor when the query names no findable place.
+        city: ${ctx.user.city}
+
+  - id: events_search
+    type: provider
+    depends_on: [geo_search]
+    optional: false   # events are the primary signal; if this fails, the run degrades gracefully
+    timeout_s: 12.0
+    retries: 1
+    config:
+      provider: events
+      args:
+        lat: ${geo_search.results.0.lat}
+        lon: ${geo_search.results.0.lon}
+        radius: 25
+
+  - id: venues_search
+    type: provider
+    depends_on: [geo_search]
+    optional: true
+    timeout_s: 10.0
+    config:
+      provider: places
+      args:
+        lat: ${geo_search.results.0.lat}
+        lon: ${geo_search.results.0.lon}
+        category: dining
+
+  - id: fuse_results
+    type: fusion
+    depends_on: [events_search, venues_search]
+    config:
+      inputs: [events_search, venues_search]
+
+  - id: rank_results
+    type: ranking
+    depends_on: [fuse_results]
+    config:
+      kind: events
+      source: ${fuse_results.data}
+      limit: 25
+
+  - id: partial_stream
+    type: stream
+    depends_on: [rank_results]
+    config:
+      partial: true
+      payload:
+        results: ${rank_results}
+        status: ranked
+
+  - id: humanize
+    type: humanization
+    depends_on: [rank_results, retrieve_context]
+    timeout_s: 15.0
+    optional: true
+    config:
+      source: ${rank_results}
+      context_keys: [city, preferences, event_categories]
+
+  - id: final_stream
+    type: stream
+    depends_on:
+      - humanize
+      - rank_results
+      - fuse_results
+      - geo_search
+      - retrieve_context
+    config:
+      payload:
+        query: ${ctx.query}
+        summary: ${humanize.text}
+        location: ${geo_search.results.0}
+        results: ${rank_results}
+        context: ${retrieve_context.chunks}
+        providers_used: ${fuse_results.providers_used}

@@ -1,0 +1,41 @@
+# Navis workflow: neighborhood_match
+#
+# Phase 3A workflow. Surfaces candidate neighborhoods in the user's city,
+# generated DYNAMICALLY from the geocoding/provider layer (Geoapify Places
+# primary, Nominatim fallback) — no markdown corpus, works for any city
+# worldwide.
+#
+# The frontend renders the returned canonical Location candidates. Scoring /
+# ranking / commute are intentionally out of scope here (later phases).
+
+workflow: neighborhood_match
+version: "2.1"
+metadata:
+  description: "Dynamic neighborhood candidates for the user's city, worldwide"
+  section_kind: neighborhoods
+  tags: [neighborhood, match]
+
+nodes:
+  - id: generate_candidates
+    type: neighborhood_candidates
+    config:
+      location: ${ctx.user.cityLocation}
+      city: ${ctx.user.city}
+      office: ${ctx.user.officeLocationResolved}
+      commute_modes: [driving]
+      limit: 24
+
+  - id: final_stream
+    type: stream
+    depends_on: [generate_candidates]
+    config:
+      payload:
+        query: ${ctx.query}
+        city: ${ctx.user.city}
+        home_area: ${ctx.user.homeArea}
+        household: ${ctx.user.household}
+        budget_band: ${ctx.user.budgetBand}
+        work_style: ${ctx.user.workStyle}
+        goals: ${ctx.user.goals}
+        center: ${generate_candidates.city}
+        candidates: ${generate_candidates.candidates}

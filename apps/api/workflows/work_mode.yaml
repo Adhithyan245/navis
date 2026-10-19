@@ -1,0 +1,106 @@
+# Navis workflow: work_mode
+#
+# "Where can I work from / get things done?" — surfaces cafes, coworking
+# spaces, and any venue with the right vibe for a laptop + a couple hours.
+# Same node primitives as explore_city; differs in retrieval tags, places
+# category, and humanization framing.
+
+workflow: work_mode
+version: "1.0"
+metadata:
+  description: "Find work-friendly cafes and coworking spaces near a query"
+  section_kind: work
+  tags: [work, coworking, cafes]
+
+nodes:
+  - id: retrieve_context
+    type: context_retrieval
+    config:
+      workflow: work_mode
+      tags: [work, cafes, coworking, remote]
+      limit: 5
+
+  - id: geo_search
+    type: provider
+    timeout_s: 15.0   # includes the place → city fallback chain
+    retries: 1
+    config:
+      provider: geo
+      args:
+        query: ${ctx.query}
+        # Fallback anchor when the query names no findable place.
+        city: ${ctx.user.city}
+
+  - id: cafes_search
+    type: provider
+    depends_on: [geo_search]
+    optional: true
+    timeout_s: 10.0
+    retries: 1
+    config:
+      provider: places
+      args:
+        lat: ${geo_search.results.0.lat}
+        lon: ${geo_search.results.0.lon}
+        category: cafe
+
+  - id: dining_search
+    type: provider
+    depends_on: [geo_search]
+    optional: true
+    timeout_s: 10.0
+    config:
+      provider: places
+      args:
+        lat: ${geo_search.results.0.lat}
+        lon: ${geo_search.results.0.lon}
+        category: dining
+
+  - id: fuse_results
+    type: fusion
+    depends_on: [cafes_search, dining_search]
+    config:
+      inputs: [cafes_search, dining_search]
+
+  - id: rank_results
+    type: ranking
+    depends_on: [fuse_results]
+    config:
+      kind: places
+      source: ${fuse_results.data}
+      limit: 20
+
+  - id: partial_stream
+    type: stream
+    depends_on: [rank_results]
+    config:
+      partial: true
+      payload:
+        results: ${rank_results}
+        status: ranked
+
+  - id: humanize
+    type: humanization
+    depends_on: [rank_results, retrieve_context]
+    timeout_s: 15.0
+    optional: true
+    config:
+      source: ${rank_results}
+      context_keys: [city, preferences, work_style, budget]
+
+  - id: final_stream
+    type: stream
+    depends_on:
+      - humanize
+      - rank_results
+      - fuse_results
+      - geo_search
+      - retrieve_context
+    config:
+      payload:
+        query: ${ctx.query}
+        summary: ${humanize.text}
+        location: ${geo_search.results.0}
+        results: ${rank_results}
+        context: ${retrieve_context.chunks}
+        providers_used: ${fuse_results.providers_used}

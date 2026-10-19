@@ -1,0 +1,46 @@
+# Node
+node_modules
+.next
+out
+build
+dist
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv
+venv/
+ENV/
+env/
+.env
+.env.local
+.env.*.local
+# .env.example is the safe TEMPLATE (placeholders only) — keep it tracked
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local account store (auth)
+apps/api/data/
+
+# Copied from node_modules on postinstall (scripts/copy-maplibre-worker.mjs)
+apps/web/public/maplibre/
+
+# Prometheus scrape token (internal secret)
+apps/api/deploy/prometheus/navis_token
+
+# Build outputs and signing material
+*.apk
+*.aab
+*.keystore
+*.jks
+keystore.properties
+# Local databases
+*.db
+*.db-journal
+
+# Personal Claude Code settings
+.claude/settings.local.json

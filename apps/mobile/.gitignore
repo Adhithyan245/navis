@@ -1,0 +1,10 @@
+node_modules/
+# Signing material — keep out of git (store in a password manager / CI secrets)
+*.keystore
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+android/keystore.properties
+android/app/google-services.json
+ios/App/App/GoogleService-Info.plist

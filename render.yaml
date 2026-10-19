@@ -1,0 +1,152 @@
+# Navis on Render — one blueprint for everything:
+#   navis-web        Next.js app (public, HTTPS) — also proxies /navis-api → API
+#   navis-api        FastAPI (private network only)
+#   navis-db         Postgres: accounts, synced data, push devices
+#   navis-cache      Key Value (Redis): shared cache + rate limits
+#   navis-push-jobs  cron: safety alerts + event reminders every 15 minutes
+#
+# Deploy: push this repo to GitHub → render.com → New → Blueprint → pick the repo.
+# Render asks for every `sync: false` value (API keys) during the first deploy.
+# Shared secrets are generated automatically.
+
+envVarGroups:
+  - name: navis-shared
+    envVars:
+      - key: AUTH_INTERNAL_SECRET
+        generateValue: true
+
+services:
+  # ── API ────────────────────────────────────────────────────────────────────
+  - type: pserv
+    name: navis-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    region: oregon
+    envVars:
+      - fromGroup: navis-shared
+      - key: PORT
+        value: "8100"
+      - key: ENV
+        value: production
+      - key: WEB_CONCURRENCY
+        value: "2"
+      # Render's internal proxy fronts the service.
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
+      - key: ACCOUNTS_DATABASE_URL
+        fromDatabase:
+          name: navis-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: navis-cache
+          property: connectionString
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEOAPIFY_API_KEY
+        sync: false
+      - key: FOURSQUARE_API_KEY
+        sync: false
+      - key: TICKETMASTER_API_KEY
+        sync: false
+      - key: OPENROUTESERVICE_API_KEY
+        sync: false
+      - key: MAPTILER_API_KEY
+        sync: false
+      # Push notifications (optional; see apps/mobile/README.md)
+      - key: FCM_PROJECT_ID
+        sync: false
+      - key: FCM_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: APNS_KEY_ID
+        sync: false
+      - key: APNS_TEAM_ID
+        sync: false
+      - key: APNS_PRIVATE_KEY
+        sync: false
+      - key: APNS_BUNDLE_ID
+        sync: false
+
+  # ── Web app ────────────────────────────────────────────────────────────────
+  - type: web
+    name: navis-web
+    runtime: node
+    rootDir: apps/web
+    plan: starter
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /privacy
+    envVars:
+      - fromGroup: navis-shared
+      - key: NODE_VERSION
+        value: "22"
+      - key: AUTH_SECRET
+        generateValue: true
+      # Browsers and the app reach the API through this site (same origin).
+      - key: NEXT_PUBLIC_API_URL
+        value: /navis-api
+      - key: NAVIS_API_INTERNAL_URL
+        fromService:
+          type: pserv
+          name: navis-api
+          property: hostport
+      # Leave empty to use the onrender.com address; set to your custom domain later.
+      - key: APP_URL
+        sync: false
+      - key: NEXT_PUBLIC_MAPTILER_API_KEY
+        sync: false
+      - key: NEXT_PUBLIC_SUPPORT_EMAIL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: APPLE_CLIENT_ID
+        sync: false
+      - key: APPLE_TEAM_ID
+        sync: false
+      - key: APPLE_KEY_ID
+        sync: false
+      - key: APPLE_PRIVATE_KEY
+        sync: false
+
+  # ── Shared cache + rate limits ─────────────────────────────────────────────
+  - type: keyvalue
+    name: navis-cache
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []   # private network only
+
+  # ── Push notification jobs ─────────────────────────────────────────────────
+  - type: cron
+    name: navis-push-jobs
+    runtime: node
+    plan: starter
+    region: oregon
+    schedule: "*/15 * * * *"
+    rootDir: apps/mobile/www
+    buildCommand: "true"
+    startCommand: >-
+      for job in safety_alerts event_reminders; do
+      curl -fsS -m 300 -X POST -H "X-Internal-Auth: $AUTH_INTERNAL_SECRET"
+      "http://$API_HOSTPORT/v2/push/jobs/$job" || exit 1; echo; done
+    envVars:
+      - fromGroup: navis-shared
+      - key: API_HOSTPORT
+        fromService:
+          type: pserv
+          name: navis-api
+          property: hostport
+
+databases:
+  - name: navis-db
+    plan: basic-256mb
+    region: oregon
+    databaseName: navis
+    user: navis
+    ipAllowList: []   # private network only

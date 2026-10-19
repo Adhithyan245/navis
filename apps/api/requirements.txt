@@ -1,0 +1,32 @@
+fastapi==0.116.1
+# Starlette pinned past CVE-2024-47874 / CVE-2025-54121
+starlette==0.47.3
+uvicorn[standard]==0.35.0
+pydantic==2.11.7
+pydantic-settings==2.10.1
+aiohttp==3.12.15
+structlog==24.1.0
+orjson==3.9.15
+PyYAML==6.0.1
+# Required by FastAPI for multipart form parsing (POST /v2/voice audio upload)
+python-multipart==0.0.20
+# Database (used by services/behavior_storage.py + onboard route)
+SQLAlchemy==2.0.27
+aiosqlite==0.20.0
+# HTTP client (provider validator probes + FastAPI TestClient in tests)
+httpx==0.27.2
+# Observability: /metrics endpoint and process/system gauges
+prometheus_client==0.20.0
+psutil==5.9.8
+# IANA timezone database for zoneinfo (Windows and slim images have none)
+tzdata==2025.2
+# Optional scale-out backends: shared cache / rate limits (REDIS_URL) and
+# accounts on Postgres (ACCOUNTS_DATABASE_URL). Both fall back to local
+# memory / SQLite when unset.
+redis==6.4.0
+psycopg[binary]==3.2.9
+psycopg-pool==3.2.6
+# Push notifications: FCM service-account JWT (RS256), APNs token JWT (ES256), APNs HTTP/2
+PyJWT[crypto]==2.10.1
+cryptography==45.0.7
+h2==4.2.0

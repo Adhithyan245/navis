@@ -1,0 +1,34 @@
+# Navis workflow: commute_analysis
+#
+# Phase 4 workflow. Estimates travel time + distance between an origin and a
+# destination across driving / walking / cycling, via the provider-agnostic
+# RoutingService (Geoapify primary, OpenRouteService fallback).
+#
+# Pure estimation: no ranking, scoring, isochrones, matrix, or multi-stop.
+# Future routing providers slot into RoutingService without changing this
+# workflow or its streaming contract.
+
+workflow: commute_analysis
+version: "1.0"
+metadata:
+  description: "Travel-time/distance estimates across modes for one origin→destination"
+  section_kind: commute
+  tags: [commute, routing]
+
+nodes:
+  - id: estimate
+    type: commute
+    config:
+      origin: ${ctx.user.origin}
+      destination: ${ctx.user.destination}
+      modes: [driving, walking, cycling]
+
+  - id: final_stream
+    type: stream
+    depends_on: [estimate]
+    config:
+      payload:
+        query: ${ctx.query}
+        origin: ${estimate.origin}
+        destination: ${estimate.destination}
+        commutes: ${estimate.commutes}

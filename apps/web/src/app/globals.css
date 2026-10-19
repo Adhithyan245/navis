@@ -1,0 +1,246 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Palette remap. Components across the app use raw `zinc-*` / `indigo-*`
+ * utility classes, so redefining those scales here re-skins every page at
+ * once: zinc becomes a cool, faintly blue-tinted neutral and indigo becomes
+ * a brighter violet-indigo accent.
+ */
+@theme {
+  --color-zinc-50: oklch(98.6% 0.003 264);
+  --color-zinc-100: oklch(96.4% 0.006 264);
+  --color-zinc-200: oklch(92.4% 0.009 264);
+  --color-zinc-300: oklch(86.5% 0.013 264);
+  --color-zinc-400: oklch(70.8% 0.018 264);
+  --color-zinc-500: oklch(55.4% 0.022 264);
+  --color-zinc-600: oklch(44.6% 0.024 264);
+  --color-zinc-700: oklch(37.2% 0.024 264);
+  --color-zinc-800: oklch(27.4% 0.022 266);
+  --color-zinc-900: oklch(20.8% 0.02 268);
+  --color-zinc-950: oklch(14.6% 0.016 270);
+
+  --color-indigo-50: oklch(97.2% 0.016 283);
+  --color-indigo-100: oklch(94.2% 0.034 283);
+  --color-indigo-200: oklch(88.6% 0.064 284);
+  --color-indigo-300: oklch(80.6% 0.108 285);
+  --color-indigo-400: oklch(70.6% 0.165 286);
+  --color-indigo-500: oklch(60.6% 0.218 287);
+  --color-indigo-600: oklch(53.8% 0.24 288);
+  --color-indigo-700: oklch(47.6% 0.22 289);
+  --color-indigo-800: oklch(40% 0.18 290);
+  --color-indigo-900: oklch(34.6% 0.14 290);
+  --color-indigo-950: oklch(25.4% 0.1 291);
+
+  --animate-shimmer: shimmer 2.2s linear infinite;
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  /* Was `var(--font-sans)` — a self-reference that made the whole app fall
+     back to Times New Roman. Point at the next/font Geist variable. */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-heading: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  color-scheme: light;
+  --background: oklch(98.4% 0.004 270);
+  --foreground: oklch(20.8% 0.02 268);
+  --card: oklch(100% 0 0);
+  --card-foreground: oklch(20.8% 0.02 268);
+  --popover: oklch(100% 0 0);
+  --popover-foreground: oklch(20.8% 0.02 268);
+  --primary: oklch(53.8% 0.24 288);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(96.4% 0.006 264);
+  --secondary-foreground: oklch(27.4% 0.022 266);
+  --muted: oklch(96.4% 0.006 264);
+  --muted-foreground: oklch(55.4% 0.022 264);
+  --accent: oklch(94.2% 0.034 283);
+  --accent-foreground: oklch(40% 0.18 290);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(92.4% 0.009 264);
+  --input: oklch(92.4% 0.009 264);
+  --ring: oklch(60.6% 0.218 287);
+  --chart-1: oklch(60.6% 0.218 287);
+  --chart-2: oklch(70% 0.15 200);
+  --chart-3: oklch(72% 0.17 150);
+  --chart-4: oklch(78% 0.16 75);
+  --chart-5: oklch(65% 0.2 15);
+  --radius: 0.75rem;
+  --sidebar: oklch(98.6% 0.003 264);
+  --sidebar-foreground: oklch(20.8% 0.02 268);
+  --sidebar-primary: oklch(53.8% 0.24 288);
+  --sidebar-primary-foreground: oklch(98.5% 0 0);
+  --sidebar-accent: oklch(96.4% 0.006 264);
+  --sidebar-accent-foreground: oklch(27.4% 0.022 266);
+  --sidebar-border: oklch(92.4% 0.009 264);
+  --sidebar-ring: oklch(60.6% 0.218 287);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(14.6% 0.016 270);
+  --foreground: oklch(96.4% 0.006 264);
+  --card: oklch(20.8% 0.02 268);
+  --card-foreground: oklch(96.4% 0.006 264);
+  --popover: oklch(20.8% 0.02 268);
+  --popover-foreground: oklch(96.4% 0.006 264);
+  --primary: oklch(70.6% 0.165 286);
+  --primary-foreground: oklch(14.6% 0.016 270);
+  --secondary: oklch(27.4% 0.022 266);
+  --secondary-foreground: oklch(96.4% 0.006 264);
+  --muted: oklch(27.4% 0.022 266);
+  --muted-foreground: oklch(70.8% 0.018 264);
+  --accent: oklch(34.6% 0.14 290 / 40%);
+  --accent-foreground: oklch(88.6% 0.064 284);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(100% 0 0 / 9%);
+  --input: oklch(100% 0 0 / 14%);
+  --ring: oklch(70.6% 0.165 286);
+  --chart-1: oklch(70.6% 0.165 286);
+  --chart-2: oklch(75% 0.13 200);
+  --chart-3: oklch(76% 0.15 150);
+  --chart-4: oklch(80% 0.14 75);
+  --chart-5: oklch(70% 0.18 15);
+  --sidebar: oklch(20.8% 0.02 268);
+  --sidebar-foreground: oklch(96.4% 0.006 264);
+  --sidebar-primary: oklch(70.6% 0.165 286);
+  --sidebar-primary-foreground: oklch(14.6% 0.016 270);
+  --sidebar-accent: oklch(27.4% 0.022 266);
+  --sidebar-accent-foreground: oklch(96.4% 0.006 264);
+  --sidebar-border: oklch(100% 0 0 / 9%);
+  --sidebar-ring: oklch(70.6% 0.165 286);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  ::selection {
+    background: var(--color-indigo-200);
+    color: var(--color-indigo-950);
+  }
+}
+
+/* Ambient page backdrop: two soft colour washes behind all content. */
+@utility app-backdrop {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(60rem 30rem at 10% -10%, oklch(60.6% 0.218 287 / 0.10), transparent 70%),
+    radial-gradient(50rem 28rem at 100% 0%, oklch(75% 0.13 200 / 0.10), transparent 70%);
+  background-attachment: fixed;
+}
+
+@utility text-gradient {
+  background-image: linear-gradient(100deg, var(--color-indigo-600), oklch(62% 0.2 320) 55%, oklch(65% 0.15 220));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility glass {
+  background-color: color-mix(in oklch, var(--card) 72%, transparent);
+  backdrop-filter: saturate(1.6) blur(16px);
+  -webkit-backdrop-filter: saturate(1.6) blur(16px);
+}
+
+@utility shadow-soft {
+  box-shadow:
+    0 1px 2px oklch(20% 0.02 268 / 0.04),
+    0 4px 16px -4px oklch(20% 0.02 268 / 0.08);
+}
+
+@utility shadow-glow {
+  box-shadow:
+    0 1px 2px oklch(20% 0.02 268 / 0.05),
+    0 12px 40px -12px oklch(53.8% 0.24 288 / 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Horizontal chip rows: scroll without a visible scrollbar. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Numbered result pins on /maps */
+.navis-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px 9999px 9999px 2px;
+  transform: rotate(-45deg);
+  background: #4f46e5;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.3);
+  color: #fff;
+  font: 600 11px/1 var(--font-geist-sans, system-ui);
+  cursor: pointer;
+}
+.navis-pin > * { transform: rotate(45deg); }
+.navis-pin:hover { background: #4338ca; }

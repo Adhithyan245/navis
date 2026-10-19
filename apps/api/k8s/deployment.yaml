@@ -1,0 +1,217 @@
+---
+# ── Namespace ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: navis
+
+---
+# ── Secret (populate values via kubectl create secret or external secrets) ────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: navis-api-keys
+  namespace: navis
+type: Opaque
+stringData:
+  GROQ_API_KEY: ""
+  FOURSQUARE_API_KEY: ""
+  GEOAPIFY_API_KEY: ""
+  TICKETMASTER_API_KEY: ""
+  EVENTBRITE_API_KEY: ""
+  OPENROUTESERVICE_API_KEY: ""
+  HUGGINGFACE_API_KEY: ""
+  MAPTILER_API_KEY: ""
+  # Shared with the Next.js server (server-to-server auth + API token key).
+  AUTH_INTERNAL_SECRET: ""
+  # Required with more than one replica: shared accounts DB, cache and limits.
+  ACCOUNTS_DATABASE_URL: ""   # postgresql://user:pass@host:5432/navis
+  REDIS_URL: ""               # redis://host:6379/0
+  # Push notifications (see apps/mobile/README.md)
+  FCM_PROJECT_ID: ""
+  FCM_SERVICE_ACCOUNT_JSON: ""  # the service-account JSON, inline
+  APNS_KEY_ID: ""
+  APNS_TEAM_ID: ""
+  APNS_PRIVATE_KEY: ""          # contents of the .p8
+  APNS_BUNDLE_ID: ""            # your iOS app id
+
+---
+# ── Deployment ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: navis-api
+  namespace: navis
+  labels:
+    app: navis-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: navis-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0        # zero-downtime deploy
+  template:
+    metadata:
+      labels:
+        app: navis-api
+      annotations:
+        # /metrics needs "Authorization: Bearer <AUTH_INTERNAL_SECRET>" in production.
+        prometheus.io/scrape: "true"
+        prometheus.io/path:   "/metrics"
+        prometheus.io/port:   "8100"
+    spec:
+      terminationGracePeriodSeconds: 40   # > graceful shutdown timeout
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: navis-api
+          image: navis-api:latest         # Replace with your registry image
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8100
+          envFrom:
+            - secretRef:
+                name: navis-api-keys
+          env:
+            - name: ENV
+              value: "production"
+            - name: DEBUG
+              value: "false"
+            - name: MAX_CONCURRENCY
+              value: "20"
+            - name: GLOBAL_TIMEOUT
+              value: "10"
+            - name: WEB_CONCURRENCY
+              value: "2"
+            # Ingress / LB address range, so rate limits see real client IPs.
+            - name: FORWARDED_ALLOW_IPS
+              value: "10.0.0.0/8"
+            - name: CORS_ALLOW_ORIGINS
+              value: "https://app.navis.example"   # your web origin(s)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "768Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8100
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8100
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+
+---
+# ── Service ────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: navis-api
+  namespace: navis
+spec:
+  selector:
+    app: navis-api
+  ports:
+    - port: 80
+      targetPort: 8100
+  type: ClusterIP
+
+---
+# ── HorizontalPodAutoscaler ───────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: navis-api-hpa
+  namespace: navis
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: navis-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+
+---
+# ── PodDisruptionBudget: keep serving during node drains ─────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: navis-api-pdb
+  namespace: navis
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: navis-api
+
+---
+# ── Push notification jobs (every 15 minutes) ────────────────────────────────
+# Safety alerts near each user's city + reminders for saved events. Each job
+# only POSTs to the API; dedup state lives in Redis, so overlapping runs are safe.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: navis-push-jobs
+  namespace: navis
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+          containers:
+            - name: run
+              image: curlimages/curl:8.10.1
+              env:
+                - name: AUTH_INTERNAL_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: navis-api-keys
+                      key: AUTH_INTERNAL_SECRET
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  for job in safety_alerts event_reminders; do
+                  curl -fsS -m 300 -X POST -H "X-Internal-Auth: $AUTH_INTERNAL_SECRET"
+                  http://navis-api.navis.svc.cluster.local/v2/push/jobs/$job || exit 1; echo; done

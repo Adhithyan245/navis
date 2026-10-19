@@ -1,0 +1,120 @@
+# Navis workflow: explore_city
+#
+# Graph:
+#
+#   retrieve_context ─┐
+#                     │
+#   geo_search ───────┼─┬─> places_search ──┐
+#                     │ └─> events_search ──┴─> fuse_results ─> rank_results ─┬─> partial_stream
+#                     │                                                        │
+#                     └────────────────────────────────────────────────────────┴─> humanize ─> final_stream
+#
+# Streaming contract:
+#   * `partial_stream` emits a `partial_result` event as soon as the ranked
+#     list is ready, so the user sees fast progressive output.
+#   * `humanize` runs concurrently and feeds `final_stream` with prose.
+#   * Internal node lifecycle events are filtered by apps/api/runtime/view.py
+#     and never reach the client.
+
+workflow: explore_city
+version: "1.2"
+metadata:
+  description: "Discover places and events for a city query"
+  section_kind: explore
+  tags: [city, exploration]
+
+nodes:
+  - id: retrieve_context
+    type: context_retrieval
+    config:
+      workflow: explore_city
+      tags: [exploration, defaults]
+      limit: 5
+
+  - id: geo_search
+    type: provider
+    timeout_s: 15.0   # includes the place → city fallback chain
+    retries: 1
+    config:
+      provider: geo
+      args:
+        query: ${ctx.query}
+        # Fallback anchor when the query names no findable place.
+        city: ${ctx.user.city}
+
+  - id: places_search
+    type: provider
+    depends_on: [geo_search]
+    optional: true
+    timeout_s: 10.0
+    retries: 1
+    config:
+      provider: places
+      args:
+        lat: ${geo_search.results.0.lat}
+        lon: ${geo_search.results.0.lon}
+        category: dining
+        # Lets the provider narrow `dining` to cafes/bars/bakeries when the
+        # query asks for them.
+        query: ${ctx.query}
+
+  - id: events_search
+    type: provider
+    depends_on: [geo_search]
+    optional: true
+    timeout_s: 10.0
+    config:
+      provider: events
+      args:
+        lat: ${geo_search.results.0.lat}
+        lon: ${geo_search.results.0.lon}
+        radius: 20
+
+  - id: fuse_results
+    type: fusion
+    depends_on: [places_search, events_search]
+    config:
+      inputs: [places_search, events_search]
+
+  - id: rank_results
+    type: ranking
+    depends_on: [fuse_results]
+    config:
+      kind: places
+      source: ${fuse_results.data}
+      limit: 25
+
+  - id: partial_stream
+    type: stream
+    depends_on: [rank_results]
+    config:
+      partial: true
+      payload:
+        results: ${rank_results}
+        status: ranked
+
+  - id: humanize
+    type: humanization
+    depends_on: [rank_results, retrieve_context]
+    timeout_s: 15.0
+    optional: true
+    config:
+      source: ${rank_results}
+      context_keys: [city, preferences, food_preferences, budget]
+
+  - id: final_stream
+    type: stream
+    depends_on:
+      - humanize
+      - rank_results
+      - fuse_results
+      - geo_search
+      - retrieve_context
+    config:
+      payload:
+        query: ${ctx.query}
+        summary: ${humanize.text}
+        location: ${geo_search.results.0}
+        results: ${rank_results}
+        context: ${retrieve_context.chunks}
+        providers_used: ${fuse_results.providers_used}

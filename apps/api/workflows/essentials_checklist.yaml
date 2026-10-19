@@ -1,0 +1,40 @@
+# Navis workflow: essentials_checklist
+#
+# Phase 2 workflow. Surfaces the city-specific essentials checklist tailored
+# to the user's move stage + household. The frontend's ChecklistContext keys
+# off each chunk's `frontmatter.id` to track per-item status (todo /
+# in_progress / done / skipped) across sessions.
+#
+# Deliberately minimal: retrieval + stream, no humanization. The chunk's
+# frontmatter is the source of truth.
+
+workflow: essentials_checklist
+version: "1.0"
+metadata:
+  description: "City-specific relocation essentials checklist"
+  section_kind: checklist
+  tags: [essentials, checklist]
+
+nodes:
+  - id: retrieve_checklist
+    type: context_retrieval
+    timeout_s: 75.0   # first visit to a new place generates its guide
+    config:
+      city: ${ctx.user.city}
+      place: ${ctx.user.cityLocation}
+      # Places without a hand-written corpus get LLM-generated, cached
+      # place-specific items (services/place_guide.py).
+      generate_local: true
+      tags: [essentials, checklist]
+      limit: 40
+
+  - id: final_stream
+    type: stream
+    depends_on: [retrieve_checklist]
+    config:
+      payload:
+        query: ${ctx.query}
+        city: ${ctx.user.city}
+        stage: ${ctx.user.moveStage}
+        household: ${ctx.user.household}
+        chunks: ${retrieve_checklist.chunks}

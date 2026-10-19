@@ -1,0 +1,26 @@
+# Secrets — never bake provider keys into the image; inject at runtime.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Frontend and legacy code are not part of the API image.
+apps/web
+**/node_modules
+**/.next
+api_legacy
+apps/api_legacy
+
+# Local tooling / caches
+.git
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.claude
+*.db
+*.md
+!README.md
+**/data/*.db
+**/data/*.txt
+**/data/*.db-*

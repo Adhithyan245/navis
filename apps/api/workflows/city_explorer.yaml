@@ -1,0 +1,37 @@
+# Navis workflow: city_explorer
+#
+# Phase 3B workflow. Dynamic city exploration: discovers places, districts,
+# landmarks, parks, shopping/business areas, and transit hubs around the
+# user's resolved city center — generated from the geocoding/places provider
+# layer (Geoapify Places), worldwide, no corpus.
+#
+# Pure discovery: no scoring, ranking, or commute. Later phases can add a
+# scoring node between generate_results and final_stream without changing the
+# workflow name or streaming contract.
+
+workflow: city_explorer
+version: "1.0"
+metadata:
+  description: "Dynamic city exploration: places, districts, landmarks, areas"
+  section_kind: explore
+  tags: [explore, city, discovery]
+
+nodes:
+  - id: generate_results
+    type: city_explore
+    config:
+      location: ${ctx.user.cityLocation}
+      city: ${ctx.user.city}
+      category: ${ctx.user.category}
+      limit: 30
+
+  - id: final_stream
+    type: stream
+    depends_on: [generate_results]
+    config:
+      payload:
+        query: ${ctx.query}
+        city: ${ctx.user.city}
+        category: ${generate_results.category}
+        center: ${generate_results.city}
+        results: ${generate_results.results}

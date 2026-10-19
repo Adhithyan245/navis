@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "navis-api"
+    static_configs:
+      - targets: ["navis-api:8100"]
+    metrics_path: /metrics
+    scrape_interval: 10s
+    # /metrics is internal-only in production: put AUTH_INTERNAL_SECRET in
+    # apps/api/deploy/prometheus/navis_token (git-ignored).
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/navis_token
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

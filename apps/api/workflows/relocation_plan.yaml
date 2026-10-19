@@ -1,0 +1,44 @@
+# Navis workflow: relocation_plan
+#
+# Phase 2 workflow. Produces a phased relocation plan tailored to the user's
+# profile (city, move stage, household, goals, budget band). The runtime
+# layer retrieves the relevant corpus chunks; the frontend groups them into
+# phases by `frontmatter.stage` and renders the timeline.
+#
+# Deliberately minimal: no providers beyond retrieval, no humanization. The
+# corpus is the source of truth; deterministic rendering keeps latency low
+# and costs zero LLM calls.
+
+workflow: relocation_plan
+version: "1.0"
+metadata:
+  description: "Phased relocation plan tailored to the user's profile"
+  section_kind: plan
+  tags: [relocation, plan]
+
+nodes:
+  - id: retrieve_plan_corpus
+    type: context_retrieval
+    timeout_s: 75.0   # first visit to a new place generates its guide
+    config:
+      city: ${ctx.user.city}
+      place: ${ctx.user.cityLocation}
+      # Places without a hand-written corpus get LLM-generated, cached
+      # place-specific items (services/place_guide.py).
+      generate_local: true
+      tags: [relocation, plan, checklist]
+      limit: 50
+
+  - id: final_stream
+    type: stream
+    depends_on: [retrieve_plan_corpus]
+    config:
+      payload:
+        query: ${ctx.query}
+        city: ${ctx.user.city}
+        home_area: ${ctx.user.homeArea}
+        stage: ${ctx.user.moveStage}
+        household: ${ctx.user.household}
+        goals: ${ctx.user.goals}
+        budget_band: ${ctx.user.budgetBand}
+        chunks: ${retrieve_plan_corpus.chunks}
