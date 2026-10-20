@@ -11,6 +11,12 @@ export class AuthBackendError extends Error {
   }
 }
 
+/** AUTH_INTERNAL_SECRET without the spaces, newline or quotes a dashboard paste can add
+ * (the API trims the same way). */
+export function internalSecret(): string | undefined {
+  return process.env.AUTH_INTERNAL_SECRET?.trim().replace(/^['"]|['"]$/g, "").trim() || undefined;
+}
+
 export function apiBase(): string {
   const pub = process.env.NEXT_PUBLIC_API_URL;
   // A relative public URL ("/navis-api") is for browsers; servers call the API directly.
@@ -47,7 +53,7 @@ async function request<T>(
   body?: unknown,
   clientIp?: string | null
 ): Promise<T> {
-  const secret = process.env.AUTH_INTERNAL_SECRET;
+  const secret = internalSecret();
   if (!secret) throw new AuthBackendError(503, "Sign-in isn't configured on this server yet.");
   const headers: Record<string, string> = { "X-Internal-Auth": secret };
   if (body !== undefined) headers["Content-Type"] = "application/json";

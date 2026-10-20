@@ -11,7 +11,7 @@
 import { cookies, headers } from "next/headers";
 import type { NextRequest } from "next/server";
 
-import { AuthBackendError, authBackend } from "@/lib/auth/backend";
+import { AuthBackendError, authBackend, internalSecret } from "@/lib/auth/backend";
 import { hostedAppUrl } from "@/lib/auth/google";
 import { SESSION_COOKIE, decodeSession, type SessionUser } from "@/lib/auth/session";
 
@@ -102,7 +102,7 @@ function apiTokenKey(): Promise<CryptoKey> {
   tokenKey ??= (async () => {
     const explicit = process.env.API_TOKEN_SECRET;
     if (explicit) return hmacKey(enc.encode(explicit));
-    const internal = process.env.AUTH_INTERNAL_SECRET;
+    const internal = internalSecret();
     if (!internal) throw new Error("AUTH_INTERNAL_SECRET is not set");
     const derived = await crypto.subtle.sign("HMAC", await hmacKey(enc.encode(internal)), enc.encode("navis-api-token-v1"));
     return hmacKey(derived);

@@ -104,6 +104,15 @@ class Settings(BaseSettings):
             url = "rediss://" + url[len("redis://"):]
         return url
 
+    @field_validator("AUTH_INTERNAL_SECRET", "API_TOKEN_SECRET", mode="before")
+    @classmethod
+    def _clean_secret(cls, value):
+        """Secrets pasted into dashboards often pick up spaces, a newline or
+        quotes; both servers must compare the same bare value."""
+        if not isinstance(value, str):
+            return value
+        return value.strip().strip("'\"").strip() or None
+
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",

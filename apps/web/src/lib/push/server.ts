@@ -2,7 +2,7 @@
  * Server-to-server calls to the API's push endpoints (/v2/push/*). Carries
  * AUTH_INTERNAL_SECRET, so this must only run on the server.
  */
-import { AuthBackendError, apiBase } from "@/lib/auth/backend";
+import { AuthBackendError, apiBase, internalSecret } from "@/lib/auth/backend";
 
 export interface PushPrefs {
   safety_alerts: boolean;
@@ -11,7 +11,7 @@ export interface PushPrefs {
 }
 
 async function call<T>(method: "GET" | "PUT" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
-  const secret = process.env.AUTH_INTERNAL_SECRET;
+  const secret = internalSecret();
   if (!secret) throw new AuthBackendError(503, "Notifications aren't configured on this server yet.");
   let response: Response;
   try {

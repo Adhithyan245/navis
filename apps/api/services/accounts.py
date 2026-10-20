@@ -281,5 +281,6 @@ async def ping() -> bool:
 
 
 def internal_secret_ok(provided: Optional[str]) -> bool:
-    expected = settings.AUTH_INTERNAL_SECRET or os.environ.get("AUTH_INTERNAL_SECRET")
-    return bool(expected) and bool(provided) and hmac.compare_digest(provided, expected)
+    expected = settings.AUTH_INTERNAL_SECRET or (os.environ.get("AUTH_INTERNAL_SECRET") or "").strip().strip("'\"").strip()
+    provided = (provided or "").strip()
+    return bool(expected) and bool(provided) and hmac.compare_digest(provided.encode(), expected.encode())
