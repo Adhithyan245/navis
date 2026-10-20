@@ -9,7 +9,8 @@
  */
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { CalendarDays, Info, LocateFixed, Loader2, Search, X } from "lucide-react";
+import Link from "next/link";
+import { CalendarDays, CircleCheck, Info, LocateFixed, Loader2, Search, X } from "lucide-react";
 
 import { EventListingCard } from "@/components/runtime/EventListingCard";
 import { LocationSearch } from "@/components/runtime/LocationSearch";
@@ -29,6 +30,7 @@ import {
 } from "@/lib/runtime/listings";
 import type { Location } from "@/lib/runtime/location";
 import { useProfileContext } from "@/lib/profile/context";
+import { useSavedItemsContext } from "@/lib/saved/context";
 import { cn } from "@/lib/utils";
 
 type LoadState =
@@ -260,6 +262,8 @@ function EventsPageInner() {
         </div>
       </div>
 
+      <MyEventsLink />
+
       {/* Results */}
       {!place && ready && (
         <EmptyState
@@ -402,6 +406,26 @@ function Chip({
     >
       {children}
     </button>
+  );
+}
+
+/** "You're signed up for N upcoming events" → the list in Saved. */
+function MyEventsLink() {
+  const { state, ready } = useSavedItemsContext();
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = state.savedEvents.filter(
+    (e) => e.signedUp && (e.endsAt ?? e.startsAt ?? "9999").slice(0, 10) >= today
+  );
+  if (!ready || upcoming.length === 0) return null;
+  return (
+    <Link
+      href="/saved#my-events"
+      className="flex items-center gap-2 rounded-xl border border-emerald-200/80 bg-emerald-50/80 px-4 py-3 text-[13px] font-medium text-emerald-900 hover:bg-emerald-50 dark:border-emerald-400/20 dark:bg-emerald-500/10 dark:text-emerald-200"
+    >
+      <CircleCheck className="size-4 shrink-0" aria-hidden />
+      You&apos;re signed up for {upcoming.length} upcoming event{upcoming.length === 1 ? "" : "s"}
+      <span className="ml-auto text-emerald-700 dark:text-emerald-300">See them →</span>
+    </Link>
   );
 }
 

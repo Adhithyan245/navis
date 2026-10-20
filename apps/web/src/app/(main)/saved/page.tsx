@@ -1,11 +1,13 @@
 "use client";
 /**
- * /saved — items the user bookmarked from query results. Reads entirely from
- * SavedItemsContext (localStorage); no backend. Grouped by kind, with an
- * empty state and per-item unsave via SaveButton.
+ * /saved — the user's events and bookmarks, synced to their account via
+ * SavedItemsContext. "My events" (signed up) first, soonest first, then
+ * other saved events, places and neighborhoods.
  */
-import { Bookmark, CalendarDays, ExternalLink, MapPin } from "lucide-react";
+import Link from "next/link";
+import { Bookmark, CalendarDays, CircleCheck, ExternalLink, MapPin } from "lucide-react";
 
+import { eventHref } from "@/components/runtime/EventListingCard";
 import { SaveButton } from "@/components/runtime/SaveButton";
 import { Card, CardContent } from "@/components/ui/card";
 import { useSavedItemsContext } from "@/lib/saved/context";
@@ -50,6 +52,16 @@ export default function SavedPage() {
     );
   }
 
+  const soonest = (a: SavedEvent, b: SavedEvent) => (a.startsAt ?? "9999").localeCompare(b.startsAt ?? "9999");
+  const today = new Date().toISOString().slice(0, 10);
+  const mine = state.savedEvents.filter((e) => e.signedUp).sort(soonest);
+  // Upcoming first; past events sink to the end, most recent first.
+  const myEvents = [
+    ...mine.filter((e) => (e.endsAt ?? e.startsAt ?? "9999").slice(0, 10) >= today),
+    ...mine.filter((e) => (e.endsAt ?? e.startsAt ?? "9999").slice(0, 10) < today).reverse(),
+  ];
+  const otherEvents = state.savedEvents.filter((e) => !e.signedUp);
+
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 py-6">
       <header>
@@ -69,9 +81,17 @@ export default function SavedPage() {
         </Section>
       )}
 
-      {state.savedEvents.length > 0 && (
-        <Section title="Events">
-          {state.savedEvents.map((e) => (
+      {myEvents.length > 0 && (
+        <Section title="My events" id="my-events">
+          {myEvents.map((e) => (
+            <EventRow key={e.id} event={e} />
+          ))}
+        </Section>
+      )}
+
+      {otherEvents.length > 0 && (
+        <Section title={myEvents.length > 0 ? "Other saved events" : "Events"}>
+          {otherEvents.map((e) => (
             <EventRow key={e.id} event={e} />
           ))}
         </Section>
@@ -90,13 +110,15 @@ export default function SavedPage() {
 
 function Section({
   title,
+  id,
   children,
 }: {
   title: string;
+  id?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-3">
+    <section id={id} className="flex scroll-mt-24 flex-col gap-3">
       <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
         {title}
       </h2>
@@ -126,13 +148,27 @@ function PlaceRow({ place }: { place: SavedPlace }) {
   );
 }
 
+/** "Sat, Nov 2, 7:30 PM". A start without an offset is the venue's local time, shown as written. */
+function when(startsAt?: string): string | null {
+  if (!startsAt) return null;
+  const dateOnly = startsAt.length <= 10;
+  const d = new Date(dateOnly ? `${startsAt}T12:00:00` : startsAt);
+  if (Number.isNaN(d.getTime())) return startsAt;
+  const day = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return dateOnly ? day : `${day}, ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
+
 function EventRow({ event }: { event: SavedEvent }) {
   return (
     <Card>
       <CardContent className="flex items-center justify-between gap-3 p-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
-            {event.url ? (
+            {event.source ? (
+              <Link href={eventHref(event.id)} className="hover:underline">
+                {event.title}
+              </Link>
+            ) : event.url ? (
               <a
                 href={event.url}
                 target="_blank"
@@ -149,7 +185,12 @@ function EventRow({ event }: { event: SavedEvent }) {
           {(event.venue || event.startsAt) && (
             <p className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
               <CalendarDays className="size-3" />
-              {[event.venue, event.startsAt].filter(Boolean).join(" · ")}
+              {[when(event.startsAt), event.venue].filter(Boolean).join(" · ")}
+            </p>
+          )}
+          {event.signedUp && (
+            <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+              <CircleCheck className="size-3" /> {event.source === "ticketmaster" ? "You have tickets" : "Signed up"}
             </p>
           )}
         </div>

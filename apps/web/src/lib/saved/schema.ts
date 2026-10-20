@@ -32,9 +32,15 @@ export interface SavedEvent {
   venue?: string;
   city?: string;
   url?: string;
-  startsAt?: string;        // ISO 8601 string
+  startsAt?: string;        // ISO 8601; without an offset it's the venue's local time
+  endsAt?: string;          // ISO 8601 date or date-time
+  timezone?: string;        // venue's IANA timezone, when known
+  online?: boolean;
   savedAt: number;
   source?: string;
+  /** The user signed up / got tickets (confirmed by them after visiting the organiser's page). */
+  signedUp?: boolean;
+  signedUpAt?: number;      // Unix milliseconds
 }
 
 export interface SavedNeighborhood {

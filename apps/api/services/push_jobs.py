@@ -126,7 +126,8 @@ async def run_event_reminders(now: Optional[datetime] = None) -> Dict[str, int]:
         place = _home_place(data.get("profile"))
         tz_name = await _timezone(place) if place else None
         for event in events:
-            start = parse_start(str(event["startsAt"]), tz_name)
+            # The venue's timezone when the app saved it, else the user's home city.
+            start = parse_start(str(event["startsAt"]), str(event.get("timezone") or "") or tz_name)
             if not start or not (now < start <= now + timedelta(hours=24)):
                 continue
             if not await _first_time(f"push:event:{user_id}:{_digest(event.get('id'), event['startsAt'])}",

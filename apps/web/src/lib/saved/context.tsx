@@ -23,6 +23,7 @@ import {
 } from "./storage";
 import {
   EMPTY_SAVED,
+  type SavedEvent,
   type SavedItem,
   type SavedItemKind,
   type SavedItemsState,
@@ -34,6 +35,8 @@ export interface SavedItemsContextValue {
   saveItem: (item: SavedItem) => void;
   removeItem: (kind: SavedItemKind, id: string) => void;
   isSaved: (kind: SavedItemKind, id: string) => boolean;
+  /** Mark an event signed up (saving it if needed) or not; it stays saved either way. */
+  setEventSignedUp: (event: SavedEvent, signedUp: boolean) => void;
   clearAll: () => void;
 }
 
@@ -128,14 +131,31 @@ export function SavedItemsProvider({ children }: { children: ReactNode }) {
     [state]
   );
 
+  const setEventSignedUp = useCallback((event: SavedEvent, signedUp: boolean) => {
+    const current = readSavedItems();
+    const existing = current.savedEvents.find((e) => e.id === event.id);
+    const updated: SavedEvent = {
+      ...(existing ?? {}),
+      ...event,
+      savedAt: existing?.savedAt || Date.now(),
+      signedUp,
+      signedUpAt: signedUp ? Date.now() : undefined,
+    };
+    const savedEvents = existing
+      ? current.savedEvents.map((e) => (e.id === event.id ? updated : e))
+      : [...current.savedEvents, updated];
+    writeSavedItems({ ...current, savedEvents });
+    dispatch();
+  }, []);
+
   const clearAll = useCallback(() => {
     storageClear();
     dispatch();
   }, []);
 
   const value = useMemo<SavedItemsContextValue>(
-    () => ({ ready, state, saveItem, removeItem, isSaved, clearAll }),
-    [ready, state, saveItem, removeItem, isSaved, clearAll]
+    () => ({ ready, state, saveItem, removeItem, isSaved, setEventSignedUp, clearAll }),
+    [ready, state, saveItem, removeItem, isSaved, setEventSignedUp, clearAll]
   );
 
   return <SavedItemsContext.Provider value={value}>{children}</SavedItemsContext.Provider>;

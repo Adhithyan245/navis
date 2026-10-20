@@ -3,7 +3,8 @@
  * /events/[id] — everything known about one event: exact date and local
  * time (with the venue's timezone), venue and directions, tickets and
  * prices, sale windows, rules, accessibility, and for conferences the
- * call-for-papers and code of conduct.
+ * call-for-papers and code of conduct. Sign up / get tickets on the
+ * organiser's site, and see that you're signed up (components/events/EventSignup).
  */
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -21,7 +22,9 @@ import {
   Users,
 } from "lucide-react";
 
+import { EventSignup } from "@/components/events/EventSignup";
 import { Button } from "@/components/ui/button";
+import { canSignUp } from "@/lib/events/signup";
 import { runtimeClient } from "@/lib/runtime/client";
 import {
   formatDistance,
@@ -205,7 +208,9 @@ export default function EventDetailPage() {
           </dl>
 
           <div className="flex flex-wrap gap-2 pt-1">
-            {e.url && (
+            {canSignUp(e) ? (
+              <EventSignup event={e} />
+            ) : e.url && (
               <a href={e.url} target="_blank" rel="noreferrer noopener">
                 <Button size="lg">
                   <Ticket /> {ctaLabel} <ExternalLink className="opacity-70" />

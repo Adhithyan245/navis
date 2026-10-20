@@ -171,6 +171,24 @@ async def test_event_reminders_within_24h_once():
     assert send.call_args.kwargs == {"url": "/events/tm_1", "kind": "event_reminders"}
 
 
+@pytest.mark.asyncio
+async def test_event_reminder_uses_the_venue_timezone():
+    a = await _user()
+    await push.register(a.id, TOKEN_A, "android")
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    # Signed up for a Tokyo event while living in Boston: 7 PM is Tokyo time.
+    await user_data.put(a.id, {"profile": PROFILE, "saved": {"savedEvents": [
+        {"kind": "event", "id": "luma_1", "title": "Tokyo Tech Meetup", "startsAt": "2026-10-24T19:00:00",
+         "timezone": "Asia/Tokyo", "signedUp": True, "savedAt": 1},
+    ]}})
+    send = AsyncMock(return_value={"sent": 1, "failed": 0, "dead": 0, "skipped": 0})
+    with patch.object(push_jobs, "_timezone", AsyncMock(return_value="America/New_York")), \
+         patch.object(push_jobs.push, "send_to_user", send):
+        stats = await push_jobs.run_event_reminders(now)       # 10:00 UTC on the 24th is 19:00 Tokyo: within 24 h
+    assert stats["reminded"] == 1
+    assert send.call_args.args[1] == "Tomorrow at 7:00 PM: Tokyo Tech Meetup"
+
+
 # ── routes ─────────────────────────────────────────────────────────────────
 
 def test_push_routes_guarded_and_roundtrip():

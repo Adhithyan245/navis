@@ -1,10 +1,12 @@
 "use client";
 /**
- * EventListingCard — one event in the /events grid. Links to the detail page.
+ * EventListingCard — one event in the /events grid. Links to the detail page,
+ * and shows "Signed up" when the user has signed up for it.
  */
 import Link from "next/link";
 import {
   CalendarDays,
+  CircleCheck,
   Clapperboard,
   Cpu,
   Drama,
@@ -27,6 +29,7 @@ import {
   placeLine,
   statusLabel,
 } from "@/lib/runtime/event-format";
+import { useSavedItemsContext } from "@/lib/saved/context";
 import { cn } from "@/lib/utils";
 
 const ICONS: Record<string, typeof Music> = {
@@ -73,6 +76,8 @@ export function EventListingCard({
   const distance = formatDistance(event.distance_km);
   const status = statusLabel(event.status);
   const multiDay = event.end_date && event.start_date && event.end_date !== event.start_date;
+  const { state } = useSavedItemsContext();
+  const signedUp = state.savedEvents.some((s) => s.id === event.id && s.signedUp);
 
   return (
     <Link
@@ -102,6 +107,12 @@ export function EventListingCard({
           <Icon className="size-3" aria-hidden />
           {categoryLabel(event.category)}
         </span>
+        {signedUp && (
+          <span className="absolute bottom-3 left-3 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm">
+            <CircleCheck className="size-3" aria-hidden />
+            {event.source === "ticketmaster" ? "You have tickets" : "Signed up"}
+          </span>
+        )}
         {(event.online || event.hybrid) && (
           <span className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-indigo-600/90 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm">
             <Globe className="size-3" aria-hidden />
