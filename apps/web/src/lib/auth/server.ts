@@ -56,11 +56,22 @@ export async function clientIp(): Promise<string | null> {
 }
 
 function appOrigin(): string | null {
+  // RENDER_EXTERNAL_URL is set automatically on Render; a custom domain goes in APP_URL.
+  const url = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   try {
-    return process.env.APP_URL ? new URL(process.env.APP_URL).origin : null;
+    return url ? new URL(url).origin : null;
   } catch {
     return null;
   }
+}
+
+/** The public origin the browser used. Behind a host's proxy, nextUrl is the
+ * internal address (e.g. http://localhost:10000), so read the forwarded host. */
+function requestOrigin(request: NextRequest): string | null {
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  if (!host) return null;
+  const proto = (request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", "")).split(",")[0].trim();
+  return `${proto}://${host.split(",")[0].trim()}`;
 }
 
 /** True when a state-changing request comes from our own pages. */
@@ -71,9 +82,10 @@ export function sameOrigin(request: NextRequest): boolean {
     // one means same-origin navigation or a non-browser client with no cookie.
     return request.headers.get("sec-fetch-site") !== "cross-site";
   }
+  // Cross-site pages can't forge Host / X-Forwarded-Host on a browser request
+  // (forbidden or preflighted headers), so matching them is safe for CSRF.
   const allowed = new Set([request.nextUrl.origin]);
-  const app = appOrigin();
-  if (app) allowed.add(app);
+  for (const o of [appOrigin(), requestOrigin(request)]) if (o) allowed.add(o);
   return allowed.has(origin);
 }
 
