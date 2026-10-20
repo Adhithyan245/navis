@@ -87,16 +87,22 @@ class Settings(BaseSettings):
     @classmethod
     def _clean_url(cls, value):
         """Accept connection strings pasted straight from provider dashboards:
-        `REDIS_URL="rediss://..."`, `psql 'postgresql://...'`, stray quotes."""
+        `REDIS_URL="rediss://..."`, `psql 'postgresql://...'`,
+        `redis-cli --tls -u redis://...` (→ rediss://), stray quotes."""
+        import re
+
         if not isinstance(value, str):
             return value
-        v = value.strip()
-        if v.lower().startswith("psql "):
-            v = v[5:].strip()
-        if "=" in v.split("://", 1)[0]:
-            v = v.split("=", 1)[1].strip()
-        v = v.strip("'\"").strip()
-        return v or None
+        raw = value.strip()
+        if not raw:
+            return None
+        m = re.search(r"(rediss?|postgres(?:ql)?|unix)://[^\s\"']+", raw)
+        if not m:
+            return raw.strip("'\"").strip() or None
+        url = m.group(0)
+        if url.startswith("redis://") and "--tls" in raw:
+            url = "rediss://" + url[len("redis://"):]
+        return url
 
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),

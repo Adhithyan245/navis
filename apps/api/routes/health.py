@@ -24,15 +24,17 @@ async def health_check():
 
 @router.get("/ready")
 async def readiness():
-    """Readiness: 503 until the accounts store answers (and Redis, when
-    configured), so load balancers only route to instances that can serve."""
+    """Readiness: 503 until the accounts store answers, so load balancers
+    only route to instances that can serve. Redis status is reported too."""
     from apps.api.services import accounts
 
     checks = {"accounts_db": await accounts.ping()}
     redis_ok = await kv.redis_ping()
     if redis_ok is not None:
         checks["redis"] = redis_ok
-    ok = all(checks.values())
+    # Redis is an optimisation (cache, shared limits) with an in-memory
+    # fallback, so it's reported but doesn't gate readiness.
+    ok = checks["accounts_db"]
     return JSONResponse({"status": "ready" if ok else "not_ready", "checks": checks}, status_code=200 if ok else 503)
 
 

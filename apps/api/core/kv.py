@@ -34,9 +34,15 @@ class _Redis:
         if self._client is None:
             import redis.asyncio as redis  # imported lazily: optional dependency
 
-            self._client = redis.from_url(
-                settings.REDIS_URL, socket_timeout=0.5, socket_connect_timeout=0.5, health_check_interval=30
-            )
+            try:
+                self._client = redis.from_url(
+                    settings.REDIS_URL, socket_timeout=0.5, socket_connect_timeout=0.5, health_check_interval=30
+                )
+            except ValueError as exc:
+                # A malformed REDIS_URL must not take the API down: run on
+                # process memory and retry later.
+                self.failed(exc)
+                return None
         return self._client
 
     def failed(self, exc: Exception) -> None:
