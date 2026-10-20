@@ -6,9 +6,18 @@ export function googleConfigured(): boolean {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 
+/** The site's public URL: APP_URL (custom domain), else the address the host
+ * provides (Render: RENDER_EXTERNAL_URL; Vercel: VERCEL_PROJECT_PRODUCTION_URL,
+ * a bare host name). */
+export function hostedAppUrl(): string | null {
+  if (process.env.APP_URL) return process.env.APP_URL;
+  if (process.env.RENDER_EXTERNAL_URL) return process.env.RENDER_EXTERNAL_URL;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  return null;
+}
+
 export function appUrl(): string {
-  // RENDER_EXTERNAL_URL is set automatically on Render; a custom domain goes in APP_URL.
-  return (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || "http://localhost:3000").replace(/\/+$/, "");
+  return (hostedAppUrl() || "http://localhost:3000").replace(/\/+$/, "");
 }
 
 export function googleRedirectUri(): string {

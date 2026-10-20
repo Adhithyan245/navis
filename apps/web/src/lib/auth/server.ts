@@ -12,6 +12,7 @@ import { cookies, headers } from "next/headers";
 import type { NextRequest } from "next/server";
 
 import { AuthBackendError, authBackend } from "@/lib/auth/backend";
+import { hostedAppUrl } from "@/lib/auth/google";
 import { SESSION_COOKIE, decodeSession, type SessionUser } from "@/lib/auth/session";
 
 const CHECK_TTL_MS = 60_000;
@@ -56,8 +57,7 @@ export async function clientIp(): Promise<string | null> {
 }
 
 function appOrigin(): string | null {
-  // RENDER_EXTERNAL_URL is set automatically on Render; a custom domain goes in APP_URL.
-  const url = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
+  const url = hostedAppUrl();
   try {
     return url ? new URL(url).origin : null;
   } catch {

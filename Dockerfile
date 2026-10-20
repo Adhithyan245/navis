@@ -41,14 +41,16 @@ USER navis
 # Expose port
 EXPOSE 8100
 
-# Health check
-HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8100/health || exit 1
+# Production defaults (override at deploy time).
+#   PORT                 port to listen on (Cloud Run sets 8080; Render: 8100)
+#   WEB_CONCURRENCY      uvicorn worker processes per container
+#   FORWARDED_ALLOW_IPS  proxy IPs/CIDRs trusted for X-Forwarded-For, so rate
+#                        limits see real client IPs
+ENV ENV=production     DEBUG=false     PORT=8100     WEB_CONCURRENCY=1     FORWARDED_ALLOW_IPS=127.0.0.1     PYTHONUNBUFFERED=1
 
-# Graceful shutdown: uvicorn handles SIGTERM natively
-CMD ["uvicorn", "apps.api.main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8100", \
-     "--workers", "1", \
-     "--timeout-graceful-shutdown", "30", \
-     "--access-log"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3     CMD curl -fs "http://localhost:${PORT}/health" || exit 1
+
+# Graceful shutdown: uvicorn handles SIGTERM natively. With several workers or
+# instances, set REDIS_URL (shared cache + rate limits) and
+# ACCOUNTS_DATABASE_URL (Postgres) so state isn't per process / on local disk.
+CMD ["sh", "-c", "exec uvicorn apps.api.main:app --host 0.0.0.0 --port ${PORT} --workers ${WEB_CONCURRENCY} --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS}\" --timeout-graceful-shutdown 30 --no-server-header --access-log"]
