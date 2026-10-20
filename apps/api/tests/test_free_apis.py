@@ -166,3 +166,33 @@ async def test_air_quality_parses_pollen():
     with patch.object(WE, "get_json", AsyncMock(return_value=payload)):
         air = await WE.air_quality(BOSTON)
     assert air["label"] == "Unhealthy" and air["pollen"] == {"grass": 12.0}
+
+
+# ── weather fallback (MET Norway) ──────────────────────────────────────────
+
+def test_met_symbols_map_to_wmo():
+    assert WE.met_symbol_to_wmo("clearsky_day") == 0 and WE.met_symbol_to_wmo("heavyrainshowers_night") == 82
+    assert WE.met_symbol_to_wmo("rainandthunder") == 95 and WE.met_symbol_to_wmo(None) is None
+
+
+@pytest.mark.asyncio
+async def test_weather_falls_back_to_met_norway_when_open_meteo_is_limited():
+    met = {"properties": {"timeseries": [
+        {"time": "2026-10-20T15:00:00Z", "data": {
+            "instant": {"details": {"air_temperature": 12.0, "wind_speed": 5.0, "relative_humidity": 70}},
+            "next_1_hours": {"summary": {"symbol_code": "lightrain"}, "details": {"precipitation_amount": 1.2}}}},
+        {"time": "2026-10-20T18:00:00Z", "data": {
+            "instant": {"details": {"air_temperature": 9.0}},
+            "next_6_hours": {"summary": {"symbol_code": "cloudy"}, "details": {"precipitation_amount": 0.0}}}},
+    ]}}
+
+    async def fake(url, params=None, headers=None):
+        return None if "open-meteo" in url else met
+
+    with patch.object(WE, "get_json", side_effect=fake):
+        r = await WE.weather(BOSTON)
+    assert r["status"] == "ok" and r["sources"] == ["met-norway"]
+    assert r["message"].startswith("Light rain, 12°C in Boston")
+    day = r["data"]["days"][0]
+    assert day["max_c"] == 12.0 and day["min_c"] == 9.0 and day["rain_chance"] == 70
+    assert r["data"]["now"]["wind_kmh"] == 18.0

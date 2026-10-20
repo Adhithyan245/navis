@@ -9,6 +9,91 @@ from apps.api.services.domain.common import PlaceRef, get_json, result
 
 URL = "https://api.open-meteo.com/v1/forecast"
 AIR_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+# Fallback forecast (MET Norway, free, worldwide). Open-Meteo rate-limits by IP,
+# and shared cloud IPs (e.g. free hosting) often hit that limit.
+MET_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
+MET_HEADERS = {"User-Agent": "Navis/1.0 github.com/Adhithyan245/navis"}
+
+# MET Norway symbol (without _day/_night) → nearest WMO code, so describe() works.
+_MET_SYMBOLS = {
+    "clearsky": 0, "fair": 1, "partlycloudy": 2, "cloudy": 3, "fog": 45,
+    "lightrain": 61, "rain": 63, "heavyrain": 65, "lightrainshowers": 80, "rainshowers": 81, "heavyrainshowers": 82,
+    "lightsleet": 66, "sleet": 66, "heavysleet": 67, "lightsleetshowers": 66, "sleetshowers": 66,
+    "lightsnow": 71, "snow": 73, "heavysnow": 75, "lightsnowshowers": 85, "snowshowers": 85, "heavysnowshowers": 86,
+}
+
+
+def met_symbol_to_wmo(symbol: str | None) -> int | None:
+    if not symbol:
+        return None
+    base = symbol.split("_")[0]
+    if "thunder" in base:
+        return 95
+    return _MET_SYMBOLS.get(base)
+
+
+def met_to_open_meteo(data: Dict[str, Any], lon: float) -> Dict[str, Any] | None:
+    """Reshape a MET Norway compact forecast like an Open-Meteo response.
+    Local dates use the longitude's approximate UTC offset (no timezone in
+    the feed); sunrise/sunset aren't provided."""
+    from datetime import datetime, timedelta
+
+    series = ((data or {}).get("properties") or {}).get("timeseries") or []
+    if not series:
+        return None
+    first = series[0]
+    inst = (first.get("data") or {}).get("instant", {}).get("details", {})
+    nxt = (first.get("data") or {}).get("next_1_hours") or (first.get("data") or {}).get("next_6_hours") or {}
+    offset = timedelta(hours=round(lon / 15))
+    days: Dict[str, Dict[str, Any]] = {}
+    for row in series:
+        try:
+            t = datetime.fromisoformat(row["time"].replace("Z", "+00:00")) + offset
+        except (KeyError, ValueError):
+            continue
+        temp = ((row.get("data") or {}).get("instant") or {}).get("details", {}).get("air_temperature")
+        d = days.setdefault(t.date().isoformat(), {"temps": [], "rain": 0.0, "symbols": []})
+        if isinstance(temp, (int, float)):
+            d["temps"].append(temp)
+        for key in ("next_1_hours", "next_6_hours"):
+            block = (row.get("data") or {}).get(key)
+            if block:
+                amount = (block.get("details") or {}).get("precipitation_amount")
+                if key == "next_1_hours" and isinstance(amount, (int, float)):
+                    d["rain"] += amount
+                code = met_symbol_to_wmo((block.get("summary") or {}).get("symbol_code"))
+                if code is not None and 9 <= t.hour <= 18:
+                    d["symbols"].append(code)
+                break
+    dates = sorted(days)[:7]
+    if not dates:
+        return None
+
+    def worst(codes):
+        return max(codes) if codes else None
+
+    return {
+        "timezone": None,
+        "current": {
+            "temperature_2m": inst.get("air_temperature"),
+            "apparent_temperature": None,
+            "weather_code": met_symbol_to_wmo((nxt.get("summary") or {}).get("symbol_code")),
+            "wind_speed_10m": round(inst["wind_speed"] * 3.6, 1) if isinstance(inst.get("wind_speed"), (int, float)) else None,
+            "relative_humidity_2m": inst.get("relative_humidity"),
+            "precipitation": None,
+            "time": first.get("time"),
+        },
+        "daily": {
+            "time": dates,
+            "weather_code": [worst(days[d]["symbols"]) for d in dates],
+            "temperature_2m_max": [max(days[d]["temps"]) if days[d]["temps"] else None for d in dates],
+            "temperature_2m_min": [min(days[d]["temps"]) if days[d]["temps"] else None for d in dates],
+            # No probabilities in the compact feed: estimate from the day's total.
+            "precipitation_probability_max": [70 if days[d]["rain"] >= 1 else 40 if days[d]["rain"] >= 0.2 else 10 for d in dates],
+            "sunrise": [None for _ in dates],
+            "sunset": [None for _ in dates],
+        },
+    }
 
 # US AQI bands (EPA)
 _AQI = ((50, "Good"), (100, "Moderate"), (150, "Unhealthy for sensitive groups"), (200, "Unhealthy"),
@@ -87,7 +172,12 @@ async def weather(place: PlaceRef) -> Dict[str, Any]:
         "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,relative_humidity_2m",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
     })
+    source = "open-meteo"
     if not data or "current" not in data:
+        met = await get_json(MET_URL, params={"lat": round(place.lat, 4), "lon": round(place.lon, 4)}, headers=MET_HEADERS)
+        data = met_to_open_meteo(met, place.lon) if met else None
+        source = "met-norway"
+    if not data or "current" not in data or data["current"].get("temperature_2m") is None:
         return result("unavailable",
                       message=f"The forecast for {place.label} isn't loading right now. Check back in a few minutes.",
                       alternatives=["Your phone's weather app will have the latest forecast."])
@@ -116,6 +206,6 @@ async def weather(place: PlaceRef) -> Dict[str, Any]:
                         "packing": hints},
                  message=f"{now['summary']}, {round(now['temp_c'])}°C in {place.label} right now"
                          + (f" (feels like {round(now['feels_like_c'])}°C)." if now.get("feels_like_c") is not None else "."),
-                 sources=["open-meteo"])
-    await cache.set(key, out, ttl=20 * 60)
+                 sources=[source])
+    await cache.set(key, out, ttl=20 * 60 if source == "open-meteo" else 30 * 60)
     return out
