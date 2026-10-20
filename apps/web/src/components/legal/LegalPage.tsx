@@ -15,6 +15,7 @@ export function LegalPage({ title, updated, children }: { title: string; updated
         <div className="flex gap-4 text-zinc-500">
           <Link href="/privacy" className="hover:text-zinc-900 dark:hover:text-zinc-100">Privacy</Link>
           <Link href="/terms" className="hover:text-zinc-900 dark:hover:text-zinc-100">Terms</Link>
+          <Link href="/disclaimer" className="hover:text-zinc-900 dark:hover:text-zinc-100">Disclaimer</Link>
           <Link href="/support" className="hover:text-zinc-900 dark:hover:text-zinc-100">Support</Link>
         </div>
       </nav>

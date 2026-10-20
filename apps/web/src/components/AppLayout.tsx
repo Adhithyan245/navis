@@ -130,6 +130,14 @@ export function AppLayout({
 
       <main className="mx-auto w-full min-w-0 max-w-6xl flex-1 px-[max(1rem,env(safe-area-inset-left))] pt-6 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:px-6 md:pt-10 md:pb-16 animate-in fade-in slide-in-from-bottom-1 duration-500">
         {children}
+        {!pathname.startsWith("/maps") && (
+          <p className="mx-auto mt-12 max-w-2xl text-center text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+            Information in Navis is gathered from the web and public data, and some of it is written by AI. It can be
+            out of date or wrong, so check official sources before relying on it. Navis isn&apos;t professional advice
+            or an emergency service.{" "}
+            <Link href="/disclaimer" className="underline hover:text-zinc-600 dark:hover:text-zinc-300">Disclaimer</Link>
+          </p>
+        )}
       </main>
 
       <MobileTabBar pathname={pathname} />

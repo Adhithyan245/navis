@@ -9,6 +9,8 @@ publish GTFS-Realtime):
   vehicles()       every vehicle moving through a map area in the next
                    couple of minutes, as path segments with times; the map
                    interpolates positions along them to animate vehicles
+  trip()           one vehicle's trip: where it is now, the stops ahead with
+                   live arrival times, and when it reaches the rider's stop
 
 Where an agency has no live feed, times are the published timetable
 (`realtime: false`), so the UI can label them "scheduled".
@@ -112,6 +114,15 @@ async def nearby_stops(lat: float, lon: float, *, radius_m: int = 600, limit: in
 
 # ── departures ─────────────────────────────────────────────────────────────
 
+def _line_name(st: Dict[str, Any], word: str) -> str:
+    # Trips added by the realtime feed can carry "?" or nothing as their name.
+    for k in ("displayName", "routeShortName", "routeLongName"):
+        v = (st.get(k) or "").strip()
+        if v and v != "?":
+            return v
+    return word.capitalize()
+
+
 def _departure_row(st: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     place = st.get("place") or {}
     # Arrival-only rows are trips ending here: nobody can board them.
@@ -120,7 +131,7 @@ def _departure_row(st: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     word = _TRANSIT_WORDS.get(st.get("mode") or "", "transit")
     return {
-        "line": st.get("displayName") or st.get("routeShortName") or st.get("routeLongName") or word,
+        "line": _line_name(st, word),
         "mode": word,
         "headsign": st.get("headsign"),
         "color": _color(st.get("routeColor")),
@@ -216,7 +227,7 @@ async def vehicles(min_lat: float, min_lon: float, max_lat: float, max_lon: floa
         trip = (seg.get("trips") or [{}])[0]
         out.append({
             "id": trip.get("tripId") or f"{dep}:{path[0]}",
-            "line": trip.get("routeShortName") or _TRANSIT_WORDS.get(seg.get("mode") or "", "transit"),
+            "line": _line_name(trip, _TRANSIT_WORDS.get(seg.get("mode") or "", "transit")),
             "mode": _TRANSIT_WORDS.get(seg.get("mode") or "", "transit"),
             "color": _color(seg.get("routeColor")) or "#4f46e5",
             "headsign": (seg.get("to") or {}).get("name"),
@@ -234,3 +245,205 @@ async def vehicles(min_lat: float, min_lon: float, max_lat: float, max_lon: floa
               "message": None if out else "No vehicles are moving in this area right now."}
     await cache.set(key, result, ttl=20)
     return result
+
+
+# ── one trip (track a vehicle) ─────────────────────────────────────────────
+
+TRIP_STOPS_AHEAD = 15
+MAX_PATH_POINTS = 1500
+_STOP_SEARCH_WINDOW = 800    # geometry points searched ahead of the previous stop
+_NEAR_DEG2 = (80 / 111_000) ** 2   # a path point within ~80 m is this stop
+
+
+def _stop_row(s: Dict[str, Any]) -> Dict[str, Any]:
+    arrival = s.get("arrival") or s.get("departure")
+    scheduled = s.get("scheduledArrival") or s.get("scheduledDeparture")
+    return {
+        "name": s.get("name") or "Stop",
+        "stop_id": s.get("stopId"),
+        "parent_id": s.get("parentId"),
+        "lat": s.get("lat"),
+        "lon": s.get("lon"),
+        "arrival": arrival,
+        "departure": s.get("departure") or arrival,
+        "scheduled": scheduled,
+        "delay_min": _delay_min(arrival, scheduled),
+        "cancelled": bool(s.get("cancelled")),
+    }
+
+
+def _stop_indices(path: List[List[float]], stops: List[Dict[str, Any]], upto: int) -> List[int]:
+    """Index of the closest path point for each stop, walking forward so a
+    line that passes a station twice (loops, a vehicle's whole day) matches
+    each visit in order."""
+    out: List[int] = []
+    last = 0
+    for s in stops[: upto + 1]:
+        lat, lon = s.get("lat"), s.get("lon")
+        if lat is None or lon is None or not path:
+            out.append(last)
+            continue
+        k = math.cos(math.radians(lat))
+        best, best_d = last, float("inf")
+        for i in range(last, min(len(path), last + _STOP_SEARCH_WINDOW)):
+            dx = (path[i][0] - lon) * k
+            dy = path[i][1] - lat
+            d = dx * dx + dy * dy
+            if d < best_d:
+                best, best_d = i, d
+            elif best_d < _NEAR_DEG2 and d > 16 * _NEAR_DEG2:
+                # Matched this visit and moved on: stop before reaching the
+                # same station on the way back.
+                break
+        out.append(best)
+        last = best
+    return out
+
+
+def _thin(path: List[List[float]], limit: int) -> List[List[float]]:
+    if len(path) <= limit:
+        return path
+    step = len(path) / limit
+    thinned = [path[int(i * step)] for i in range(limit)]
+    thinned[-1] = path[-1]
+    return thinned
+
+
+async def _trip_data(trip_id: str) -> Optional[Dict[str, Any]]:
+    key = f"live.trip:{trip_id}"
+    cached = await cache.get(key)
+    if cached is not None:
+        return cached
+    data = await _get("/api/v1/trip", {"tripId": trip_id})
+    if not isinstance(data, dict):
+        return None
+    legs = [leg for leg in data.get("legs") or [] if leg.get("tripId")]
+    leg = next((leg for leg in legs if leg.get("tripId") == trip_id), legs[0] if legs else None)
+    if not leg:
+        return None
+    stops = [_stop_row(s) for s in [leg.get("from") or {}, *(leg.get("intermediateStops") or []), leg.get("to") or {}]]
+    stops = [s for s in stops if s["arrival"]]
+    geom = leg.get("legGeometry") or {}
+    word = _TRANSIT_WORDS.get(leg.get("mode") or "", "transit")
+    out = {
+        "trip_id": trip_id,
+        "line": _line_name(leg, word),
+        "mode": word,
+        "headsign": leg.get("headsign"),
+        "color": _color(leg.get("routeColor")) or "#4f46e5",
+        "text_color": _color(leg.get("routeTextColor")),
+        "agency": leg.get("agencyName"),
+        "realtime": bool(leg.get("realTime")),
+        "cancelled": bool(leg.get("cancelled")),
+        "stops": stops,
+        "path": decode_polyline(geom.get("points") or "", int(geom.get("precision") or 5)),
+    }
+    await cache.set(key, out, ttl=20)          # live data: refresh often
+    return out
+
+
+async def trip(trip_id: str, *, stop_id: Optional[str] = None, stop_name: Optional[str] = None,
+               at: Optional[str] = None, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+    """Where a trip's vehicle is and when it reaches each stop ahead.
+
+    `vehicle` is either a moving segment (from/to stop, times, path between
+    them, for the map to animate like /vehicles) or a fixed `position` while
+    it waits at a stop. `your_stop` is the rider's stop (`stop_id` or
+    `stop_name`; `at`, the departure they picked) with minutes until arrival."""
+    data = await _trip_data(trip_id)
+    if data is None:
+        return None
+    now = now or datetime.now(timezone.utc)
+    stops = data["stops"]
+    if not stops:
+        return None
+    times = [_parse(s["arrival"]) for s in stops]
+    deps = [_parse(s["departure"]) for s in stops]
+    # Next stop: the first one the vehicle hasn't left yet.
+    nxt = next((i for i, d in enumerate(deps) if d and d > now), len(stops))
+    finished = nxt >= len(stops)
+
+    # A vehicle's trip can be its whole day, passing the rider's stop many
+    # times; `at` (the departure the rider picked) selects the right visit.
+    mine = None
+    left_your_stop = False
+    if stop_id or stop_name:
+        # Lines at one station use different platforms (stop ids); the station name ties them.
+        name = (stop_name or "").strip().lower()
+        visits = [i for i in range(len(stops))
+                  if (stop_id and stop_id in (stops[i]["stop_id"], stops[i]["parent_id"]))
+                  or (name and stops[i]["name"].strip().lower() == name)]
+        target = _parse(at) if at else None
+        if target:
+            near = [i for i in visits if deps[i] and abs((deps[i] - target).total_seconds()) <= 40 * 60]
+            pick = min(near, key=lambda i: abs((deps[i] - target).total_seconds()), default=None)
+        else:
+            pick = next((i for i in visits if i >= nxt), None)
+        if pick is not None and pick < nxt:
+            left_your_stop = True
+        elif pick is not None:
+            mine = pick
+
+    # Where this run ends: the vehicle turns back (…, A, END, A, …).
+    end = next((j for j in range(max(1, nxt), len(stops) - 1) if stops[j - 1]["name"] == stops[j + 1]["name"]),
+               len(stops) - 1)
+    # The feed's headsign covers the vehicle's whole day; the run's last stop is where it's going now.
+    headsign = stops[end]["name"]
+
+    lo = max(0, nxt - 2)
+    hi = min(end, nxt + TRIP_STOPS_AHEAD)
+    if mine is not None:
+        hi = max(hi, min(mine, nxt + 60))
+    idx = _stop_indices(data["path"], stops, hi)
+    window = []
+    for i in range(lo, hi + 1):
+        s = stops[i]
+        window.append({**{k: v for k, v in s.items() if k != "parent_id"},
+                       "passed": bool(deps[i] and deps[i] <= now) and i < nxt,
+                       "minutes": None if not times[i] else max(0, round((times[i] - now).total_seconds() / 60)),
+                       "yours": i == mine})
+
+    vehicle: Optional[Dict[str, Any]] = None
+    if not finished:
+        here = stops[nxt]
+        at_stop = times[nxt] and times[nxt] <= now        # arrived, not yet left
+        if nxt == 0 or at_stop:
+            vehicle = {"position": [here["lon"], here["lat"]], "at": here["name"]}
+        else:
+            prev = stops[nxt - 1]
+            seg = data["path"][idx[nxt - 1]: idx[nxt] + 1] or [[prev["lon"], prev["lat"]], [here["lon"], here["lat"]]]
+            if len(seg) < 2:
+                seg = [[prev["lon"], prev["lat"]], [here["lon"], here["lat"]]]
+            vehicle = {"from": prev["name"], "to": here["name"],
+                       "departure": prev["departure"], "arrival": here["arrival"], "path": seg}
+
+    path = data["path"][idx[max(0, nxt - 1)]: idx[hi] + 1] if data["path"] else []
+    your_stop = None
+    if mine is not None:
+        s = stops[mine]
+        your_stop = {"name": s["name"], "arrival": s["arrival"], "delay_min": s["delay_min"],
+                     "minutes": max(0, round((times[mine] - now).total_seconds() / 60)) if times[mine] else None,
+                     "stops_away": max(0, mine - nxt)}
+
+    if finished:
+        message = "This trip has finished."
+    elif left_your_stop:
+        message = "This vehicle has already left your stop."
+    elif (stop_id or stop_name) and mine is None:
+        message = "This vehicle doesn't stop at your stop in the next while."
+    elif data["cancelled"]:
+        message = "This trip is cancelled."
+    elif not data["realtime"]:
+        message = "This operator doesn't share live positions, so times and position follow the published timetable."
+    else:
+        message = None
+    return {
+        **{k: data[k] for k in ("trip_id", "line", "mode", "color", "text_color", "agency", "realtime", "cancelled")},
+        "headsign": headsign,
+        "stops": window,
+        "vehicle": vehicle,
+        "path": _thin(path, MAX_PATH_POINTS),
+        "your_stop": your_stop,
+        "server_time": _iso(now),
+        "message": message,
+    }

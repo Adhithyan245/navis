@@ -108,3 +108,98 @@ def test_live_routes_validate_and_delegate():
     assert nb.call_args.kwargs == {"stops": 3}
     with patch.object(R.live_transit, "departures", AsyncMock(return_value=None)):
         assert "isn't loading" in c.get("/v2/transit/live/departures", params={"stop_id": "x"}).json()["message"] or True
+
+
+# ── track one trip ─────────────────────────────────────────────────────────
+
+def _encode(points):
+    """Google polyline encoder (precision 5) for test geometry; points are (lat, lon)."""
+    out, plat, plon = [], 0, 0
+    for lat, lon in points:
+        for v, prev in ((round(lat * 1e5), plat), (round(lon * 1e5), plon)):
+            d = v - prev
+            d = ~(d << 1) if d < 0 else d << 1
+            while d >= 0x20:
+                out.append(chr((0x20 | (d & 0x1F)) + 63))
+                d >>= 5
+            out.append(chr(d + 63))
+        plat, plon = round(lat * 1e5), round(lon * 1e5)
+    return "".join(out)
+
+
+def _block(now):
+    """A vehicle's day: A → B → C → D (turns back) → C → B, a stop every 2 minutes.
+    It left A a minute ago, so it's between A and B."""
+    names = ["A", "B", "C", "D", "C", "B"]
+    lats = [42.30, 42.31, 42.32, 42.33, 42.32, 42.31]
+    t = [now - timedelta(minutes=1) + timedelta(minutes=2 * i) for i in range(len(names))]
+    geom = []
+    for i in range(len(lats) - 1):          # 10 points between stops, back over the same track after D
+        for k in range(10):
+            geom.append((lats[i] + (lats[i + 1] - lats[i]) * k / 10, -71.06))
+    geom.append((lats[-1], -71.06))
+    rows = [{"name": n, "stopId": f"{n}-{'n' if i < 3 else 's'}", "lat": la, "lon": -71.06,
+             "arrival": _iso(ti), "departure": _iso(ti), "scheduledArrival": _iso(ti - timedelta(minutes=1)),
+             "scheduledDeparture": _iso(ti - timedelta(minutes=1))}
+            for i, (n, la, ti) in enumerate(zip(names, lats, t))]
+    return {"legs": [{"mode": "SUBWAY", "tripId": "T1", "displayName": "?", "routeLongName": "Orange Line",
+                      "headsign": "Somewhere", "routeColor": "ed8b00", "realTime": True, "agencyName": "MBTA",
+                      "from": rows[0], "intermediateStops": rows[1:-1], "to": rows[-1],
+                      "legGeometry": {"points": _encode(geom), "precision": 5}}]}
+
+
+@pytest.mark.asyncio
+async def test_trip_tracks_vehicle_and_your_stop():
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    with patch.object(LT, "_get", AsyncMock(return_value=_block(now))):
+        # Rider at C, picked the departure on the way out (the first visit).
+        t = await LT.trip("T1", stop_name="C", at=_iso(now + timedelta(minutes=3)), now=now)
+    assert t["line"] == "Orange Line"                       # "?" display name skipped
+    assert t["headsign"] == "D"                             # this run ends where the vehicle turns back
+    assert [s["name"] for s in t["stops"]] == ["A", "B", "C", "D"]
+    assert t["stops"][0]["passed"] and not t["stops"][1]["passed"]
+    v = t["vehicle"]
+    assert v["from"] == "A" and v["to"] == "B" and len(v["path"]) >= 2
+    assert v["path"][0][1] == pytest.approx(42.30) and v["path"][-1][1] == pytest.approx(42.31)
+    assert t["your_stop"] == {"name": "C", "arrival": _iso(now + timedelta(minutes=3)), "delay_min": 1,
+                              "minutes": 3, "stops_away": 1}
+    assert [s["yours"] for s in t["stops"]] == [False, False, True, False]
+    assert t["path"] and t["message"] is None
+
+
+@pytest.mark.asyncio
+async def test_trip_return_visit_and_left_stop():
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    with patch.object(LT, "_get", AsyncMock(return_value=_block(now))):
+        # The departure on the way back from D picks the second visit to C.
+        back = await LT.trip("T1", stop_name="C", at=_iso(now + timedelta(minutes=7)), now=now)
+        later = now + timedelta(minutes=4)               # vehicle has passed C (first visit at +3)
+        gone = await LT.trip("T1", stop_id="C-n", at=_iso(now + timedelta(minutes=3)), now=later)
+        done = await LT.trip("T1", now=now + timedelta(hours=1))
+    assert back["your_stop"]["minutes"] == 7 and back["your_stop"]["stops_away"] == 3
+    assert gone["your_stop"] is None and "already left" in gone["message"]
+    assert done["vehicle"] is None and "finished" in done["message"]
+    # On the way back (no more turnarounds) it's headed for the last stop, not the feed's day-level headsign.
+    assert back["headsign"] == "D"
+    with patch.object(LT, "_get", AsyncMock(return_value=_block(now))):
+        last_run = await LT.trip("T1", now=now + timedelta(minutes=6))
+    assert last_run["headsign"] == "B"
+
+
+@pytest.mark.asyncio
+async def test_trip_unavailable():
+    with patch.object(LT, "_get", AsyncMock(return_value=None)):
+        assert await LT.trip("nope") is None
+
+
+def test_trip_route():
+    from apps.api.main import app
+    from apps.api.routes import maps as R
+    c = TestClient(app)
+    with patch.object(R.live_transit, "trip", AsyncMock(return_value=None)):
+        r = c.get("/v2/transit/live/trip", params={"trip_id": "x"})
+    assert r.status_code == 200 and r.json()["stops"] == [] and "can't find" in r.json()["message"]
+    with patch.object(R.live_transit, "trip", AsyncMock(return_value={"trip_id": "x"})) as tr:
+        c.get("/v2/transit/live/trip", params={"trip_id": "x", "stop_id": "s", "stop_name": "Park St", "at": "2026-10-20T10:00:00Z"})
+    assert tr.call_args.kwargs == {"stop_id": "s", "stop_name": "Park St", "at": "2026-10-20T10:00:00Z"}
+    assert c.get("/v2/transit/live/trip").status_code == 422

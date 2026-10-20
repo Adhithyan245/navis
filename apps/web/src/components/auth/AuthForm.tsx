@@ -109,6 +109,14 @@ export function AuthForm({
           {pending && <Loader2 className="size-4 animate-spin" />}
           {isSignup ? "Create account" : "Sign in"}
         </button>
+        {isSignup && (
+          <p className="text-center text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            By creating an account you agree to the{" "}
+            <Link href="/terms" className="underline hover:text-zinc-900 dark:hover:text-zinc-100">Terms</Link> and{" "}
+            <Link href="/disclaimer" className="underline hover:text-zinc-900 dark:hover:text-zinc-100">Disclaimer</Link>.
+            Information in Navis is gathered from the web and may be wrong.
+          </p>
+        )}
       </form>
 
       <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">

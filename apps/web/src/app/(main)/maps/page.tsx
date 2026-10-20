@@ -9,6 +9,8 @@
  *   /maps?lat=..&lon=..&name=..   focus a place
  *   /maps?category=hospitals      open a category around the user's city
  *   /maps?live=1                  start with live transit vehicles on
+ *   /maps?track=<trip>&stop_id=..&stop_name=..&at=..&tlat=..&tlon=..
+ *                                 follow one bus / train to the rider's stop
  */
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -38,6 +40,7 @@ import {
 
 import { LocationSearch } from "@/components/runtime/LocationSearch";
 import { LiveDepartures } from "@/components/transit/LiveDepartures";
+import { TripTracker } from "@/components/transit/TripTracker";
 import { enhancePoiLayers, poiAt, type TappedPoi } from "@/lib/maps/poi";
 import { MAP_STYLES, MODE_COLORS, styleUrl, type MapStyleKey } from "@/lib/maps/style";
 import {
@@ -52,7 +55,7 @@ import { runtimeClient } from "@/lib/runtime/client";
 import { getRuntimeConfig } from "@/lib/runtime/config";
 import type { Location } from "@/lib/runtime/location";
 import { useProfileContext } from "@/lib/profile/context";
-import { isTransitPlace, positionAt, toTrack, type Track } from "@/lib/transit/live";
+import { isTransitPlace, positionAt, toTrack, type LiveTrip, type Track, type TrackTarget } from "@/lib/transit/live";
 import { cn } from "@/lib/utils";
 
 type Panel = "results" | "place" | "directions";
@@ -70,6 +73,8 @@ const ROUTE_SOURCE = "navis-route";
 const LIVE_SOURCE = "navis-live";
 const LIVE_REFRESH_MS = 30_000;
 const LIVE_MIN_ZOOM = 12.5;
+const TRIP_SOURCE = "navis-trip";
+const TRIP_REFRESH_MS = 20_000;
 
 function fmtDuration(min: number): string {
   if (min < 60) return `${Math.max(1, Math.round(min))} min`;
@@ -152,6 +157,16 @@ function MapsPageInner() {
   const [liveInfo, setLiveInfo] = useState<Track | null>(null);
   const tracksRef = useRef<Track[]>([]);
   const liveRef = useRef(live);
+  // Following one vehicle (?track=… or "Track" on a departure / vehicle).
+  const [track, setTrack] = useState<TrackTarget | null>(() => {
+    const tripId = params.get("track");
+    return tripId ? { tripId, stopId: params.get("stop_id"), stopName: params.get("stop_name"), at: params.get("at") } : null;
+  });
+  const [trip, setTrip] = useState<LiveTrip | null>(null);
+  const [tripLoading, setTripLoading] = useState(false);
+  const [tripError, setTripError] = useState(false);
+  const [tick, setTick] = useState(() => Date.now());
+  const tripRef = useRef<TripState | null>(null);
 
   const home = profile?.cityLocation ?? null;
 
@@ -161,8 +176,13 @@ function MapsPageInner() {
     const focusLat = Number(params.get("lat"));
     const focusLon = Number(params.get("lon"));
     const hasFocus = Number.isFinite(focusLat) && Number.isFinite(focusLon) && params.get("lat") !== null;
+    const trackLat = Number(params.get("tlat"));
+    const trackLon = Number(params.get("tlon"));
+    const hasTrackFocus = params.get("tlat") !== null && Number.isFinite(trackLat) && Number.isFinite(trackLon);
     const center: [number, number] = hasFocus
       ? [focusLon, focusLat]
+      : hasTrackFocus
+      ? [trackLon, trackLat]
       : home
       ? [home.lon, home.lat]
       : [10, 20];
@@ -170,7 +190,7 @@ function MapsPageInner() {
       container: containerRef.current,
       style: styleUrl("streets", maptilerKey),
       center,
-      zoom: hasFocus ? 16 : home ? 13 : 1.4,
+      zoom: hasFocus ? 16 : hasTrackFocus ? 14 : home ? 13 : 1.4,
       attributionControl: { compact: true },
       maxPitch: 75,
     });
@@ -194,6 +214,7 @@ function MapsPageInner() {
       enhancePoiLayers(map, styleKeyRef.current === "dark");
       drawRoute(map, routeRef.current);
       ensureLiveLayers(map);
+      drawTrip(map, tripRef.current, Date.now());
     });
     // Tap a live vehicle, or a shop / restaurant / landmark on the base map.
     map.on("click", (e) => {
@@ -304,6 +325,85 @@ function MapsPageInner() {
       map.off("moveend", onMove);
     };
   }, [live, mapReady]);
+
+  // ── follow one vehicle ──────────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    if (!track) {
+      tripRef.current = null;
+      drawTrip(map, null, Date.now());
+      return;
+    }
+    let controller: AbortController | null = null;
+    let framed = false;
+    const load = async () => {
+      controller?.abort();
+      const mine = new AbortController();
+      controller = mine;
+      setTripLoading(true);
+      try {
+        const data = await runtimeClient.liveTrip(track, mine.signal);
+        tripRef.current = tripState(data);
+        setTrip(data);
+        setTripError(false);
+        drawTrip(map, tripRef.current, Date.now());
+        // First load: frame the vehicle and the rider's stop.
+        if (!framed) {
+          framed = true;
+          const here = tripPosition(tripRef.current, Date.now());
+          const stop = data.stops.find((s) => s.yours);
+          const pts = [here, stop ? ([stop.lon, stop.lat] as [number, number]) : null].filter(
+            (p): p is [number, number] => p !== null
+          );
+          // Keep clear of the search bar and the tracker panel (bottom sheet on phones, left panel on desktop).
+          const phone = window.innerWidth < 768;
+          const padding = { top: 150, right: 60, bottom: phone ? Math.round(window.innerHeight * 0.5) + 20 : 60, left: phone ? 40 : 420 };
+          if (pts.length === 2) {
+            map.fitBounds(new maplibregl.LngLatBounds(pts[0], pts[0]).extend(pts[1]), { padding, maxZoom: 16, duration: 900 });
+          } else if (pts.length === 1) {
+            map.easeTo({ center: pts[0], zoom: Math.max(map.getZoom(), 15), padding, duration: 900 });
+          }
+        }
+      } catch {
+        if (!mine.signal.aborted) setTripError(true);
+      } finally {
+        if (!mine.signal.aborted) setTripLoading(false);
+      }
+    };
+    void load();
+    const refresh = setInterval(() => void load(), TRIP_REFRESH_MS);
+    const animate = setInterval(() => {
+      const now = Date.now();
+      drawTrip(map, tripRef.current, now);
+      setTick(now);
+    }, 1000);
+    return () => {
+      controller?.abort();
+      clearInterval(refresh);
+      clearInterval(animate);
+    };
+  }, [track, mapReady]);
+
+  const startTracking = useCallback((t: TrackTarget) => {
+    setTrip(null);
+    setTripError(false);
+    setLiveInfo(null);
+    setPanelOpen(true);
+    setTrack(t);
+  }, []);
+
+  const stopTracking = useCallback(() => {
+    setTrack(null);
+    setTrip(null);
+    tripRef.current = null;
+    if (mapRef.current) drawTrip(mapRef.current, null, Date.now());
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("track")) {
+      ["track", "stop_id", "stop_name", "at", "tlat", "tlon"].forEach((k) => url.searchParams.delete(k));
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, []);
 
   // ── categories ──────────────────────────────────────────────────────────
   const selectPin = useCallback((pin: Pin, fly = true) => {
@@ -608,11 +708,18 @@ function MapsPageInner() {
               <X className="size-4" />
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => startTracking({ tripId: liveInfo.id })}
+            className="mt-2 w-full rounded-xl bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+          >
+            Track this {liveInfo.mode}
+          </button>
         </div>
       )}
 
       {/* Side panel (desktop) / bottom sheet (mobile) */}
-      {(selected || results.length > 0 || resultsNote || loading) && (
+      {(track || selected || results.length > 0 || resultsNote || loading) && (
         <aside
           className={cn(
             "absolute z-20 flex flex-col overflow-hidden bg-white/97 shadow-2xl backdrop-blur dark:bg-zinc-900/97",
@@ -627,6 +734,10 @@ function MapsPageInner() {
             aria-label={panelOpen ? "Collapse panel" : "Expand panel"}
           />
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {track ? (
+              <TripTracker trip={trip} loading={tripLoading} error={tripError} now={tick} onClose={stopTracking} />
+            ) : (
+            <>
             {panel === "results" && (
               <ResultsList
                 loading={loading}
@@ -646,6 +757,7 @@ function MapsPageInner() {
                   setPanel("results");
                 }}
                 onDirections={() => void startDirections()}
+                onTrack={startTracking}
               />
             )}
             {panel === "directions" && selected && (
@@ -663,6 +775,8 @@ function MapsPageInner() {
                   if (mapRef.current) drawRoute(mapRef.current, null);
                 }}
               />
+            )}
+            </>
             )}
           </div>
         </aside>
@@ -741,6 +855,96 @@ function drawLive(
   });
 }
 
+// ── tracked vehicle ────────────────────────────────────────────────────────
+
+interface TripState {
+  data: LiveTrip;
+  seg: Track | null;
+}
+
+function tripState(data: LiveTrip): TripState {
+  const v = data.vehicle;
+  const seg =
+    v && "path" in v && v.path.length >= 2
+      ? toTrack({
+          id: data.trip_id, line: data.line ?? "", mode: data.mode ?? "transit", color: data.color ?? "#4f46e5",
+          headsign: data.headsign ?? null, from: v.from, to: v.to, departure: v.departure, arrival: v.arrival,
+          delay_min: null, realtime: !!data.realtime, path: v.path,
+        })
+      : null;
+  return { data, seg };
+}
+
+/** Where the tracked vehicle is now: along its moving segment, or waiting at a stop. */
+function tripPosition(t: TripState | null, now: number): [number, number] | null {
+  const v = t?.data.vehicle;
+  if (!t || !v) return null;
+  if ("position" in v) return v.position;
+  if (!t.seg) return null;
+  // Between refreshes the segment can end: hold at its last stop.
+  return positionAt(t.seg, now) ?? (now > t.seg.t1 ? t.seg.path[t.seg.path.length - 1] : t.seg.path[0]);
+}
+
+function drawTrip(map: maplibregl.Map, t: TripState | null, now: number) {
+  if (!map.isStyleLoaded()) return;
+  const color = t?.data.color ?? "#4f46e5";
+  const here = tripPosition(t, now);
+  const features: GeoJSON.Feature[] = [];
+  if (t && t.data.path.length >= 2) {
+    features.push({ type: "Feature", properties: { kind: "route" }, geometry: { type: "LineString", coordinates: t.data.path } });
+  }
+  for (const s of t?.data.stops ?? []) {
+    if (s.passed) continue;
+    features.push({ type: "Feature", properties: { kind: s.yours ? "mine" : "stop", name: s.name }, geometry: { type: "Point", coordinates: [s.lon, s.lat] } });
+  }
+  if (here) features.push({ type: "Feature", properties: { kind: "vehicle" }, geometry: { type: "Point", coordinates: here } });
+  const data: GeoJSON.FeatureCollection = { type: "FeatureCollection", features };
+  const source = map.getSource(TRIP_SOURCE) as maplibregl.GeoJSONSource | undefined;
+  if (source) {
+    source.setData(data);
+  } else {
+    map.addSource(TRIP_SOURCE, { type: "geojson", data });
+    map.addLayer({
+      id: `${TRIP_SOURCE}-route`, type: "line", source: TRIP_SOURCE, filter: ["==", ["get", "kind"], "route"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": color, "line-width": 5, "line-opacity": 0.85 },
+    });
+    map.addLayer({
+      id: `${TRIP_SOURCE}-stops`, type: "circle", source: TRIP_SOURCE,
+      filter: ["in", ["get", "kind"], ["literal", ["stop", "mine"]]],
+      paint: {
+        "circle-radius": ["case", ["==", ["get", "kind"], "mine"], 8, 4],
+        "circle-color": "#ffffff",
+        "circle-stroke-color": ["case", ["==", ["get", "kind"], "mine"], "#4f46e5", color],
+        "circle-stroke-width": ["case", ["==", ["get", "kind"], "mine"], 4, 2.5],
+      },
+    });
+    map.addLayer({
+      id: `${TRIP_SOURCE}-stop-label`, type: "symbol", source: TRIP_SOURCE, minzoom: 13,
+      filter: ["in", ["get", "kind"], ["literal", ["stop", "mine"]]],
+      layout: {
+        "text-field": ["get", "name"], "text-size": 11, "text-offset": [0, 1.2], "text-anchor": "top",
+        "text-font": ["Roboto Medium", "Noto Sans Bold"],
+      },
+      paint: { "text-color": "#27272a", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
+    });
+    map.addLayer({
+      id: `${TRIP_SOURCE}-halo`, type: "circle", source: TRIP_SOURCE, filter: ["==", ["get", "kind"], "vehicle"],
+      paint: { "circle-radius": 20, "circle-color": color, "circle-opacity": 0.22 },
+    });
+    map.addLayer({
+      id: `${TRIP_SOURCE}-vehicle`, type: "circle", source: TRIP_SOURCE, filter: ["==", ["get", "kind"], "vehicle"],
+      paint: { "circle-radius": 10, "circle-color": color, "circle-stroke-color": "#ffffff", "circle-stroke-width": 3 },
+    });
+  }
+  if (t && map.getLayer(`${TRIP_SOURCE}-route`)) {
+    map.setPaintProperty(`${TRIP_SOURCE}-route`, "line-color", color);
+    map.setPaintProperty(`${TRIP_SOURCE}-stops`, "circle-stroke-color", ["case", ["==", ["get", "kind"], "mine"], "#4f46e5", color]);
+    map.setPaintProperty(`${TRIP_SOURCE}-halo`, "circle-color", color);
+    map.setPaintProperty(`${TRIP_SOURCE}-vehicle`, "circle-color", color);
+  }
+}
+
 // ── panels ─────────────────────────────────────────────────────────────────
 
 function ResultsList({
@@ -781,13 +985,14 @@ function ResultsList({
 }
 
 function PlaceDetail({
-  place, canGoBack, onBack, onClose, onDirections,
+  place, canGoBack, onBack, onClose, onDirections, onTrack,
 }: {
   place: Pin;
   canGoBack: boolean;
   onBack: () => void;
   onClose: () => void;
   onDirections: () => void;
+  onTrack: (t: TrackTarget) => void;
 }) {
   const share = async () => {
     const url = `${window.location.origin}/maps?lat=${place.lat}&lon=${place.lon}&name=${encodeURIComponent(place.name)}`;
@@ -853,7 +1058,7 @@ function PlaceDetail({
       {isTransitPlace(place.categories, place.name) && (
         <div className="rounded-xl border border-zinc-200/80 p-3 dark:border-white/[0.07]">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">Live departures</p>
-          <LiveDepartures lat={place.lat} lon={place.lon} stops={2} compact />
+          <LiveDepartures lat={place.lat} lon={place.lon} stops={2} compact onTrack={onTrack} />
         </div>
       )}
       <dl className="space-y-2 text-[13px]">

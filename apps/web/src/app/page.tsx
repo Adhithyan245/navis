@@ -220,9 +220,10 @@ export default async function LandingPage() {
         <nav className="mb-2 flex justify-center gap-4">
           <Link href="/privacy" className="hover:text-zinc-900 dark:hover:text-zinc-100">Privacy</Link>
           <Link href="/terms" className="hover:text-zinc-900 dark:hover:text-zinc-100">Terms</Link>
+          <Link href="/disclaimer" className="hover:text-zinc-900 dark:hover:text-zinc-100">Disclaimer</Link>
           <Link href="/support" className="hover:text-zinc-900 dark:hover:text-zinc-100">Support</Link>
         </nav>
-        © {new Date().getFullYear()} Navis · Map data © OpenStreetMap contributors
+        © {new Date().getFullYear()} Navis · Information gathered from the web and public data; check before relying on it · Map data © OpenStreetMap contributors
       </footer>
     </div>
   );

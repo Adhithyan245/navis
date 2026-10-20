@@ -8,7 +8,8 @@ routes/maps.py — the map experience and health & emergency services.
   GET /v2/transit/live/boards        live departure boards for the nearest stops
   GET /v2/transit/live/departures    live departures at one stop
   GET /v2/transit/live/vehicles      vehicles moving through a map area (animated on the map)
-  GET /v2/care                       emergency numbers, helplines, nearby
+  GET /v2/transit/live/trip          track one vehicle: position, stops ahead, ETA at your stop
+  GET /v2/care                      emergency numbers, helplines, nearby
                                      care and where to book, for a place
 """
 from __future__ import annotations
@@ -80,6 +81,18 @@ async def live_departures(stop_id: str = Query(..., min_length=1, max_length=200
     if board is None:
         return {"stop_id": stop_id, "departures": [], "message": "Live departures aren't loading right now."}
     return board
+
+
+@router.get("/v2/transit/live/trip")
+async def live_trip(trip_id: str = Query(..., min_length=1, max_length=300),
+                    stop_id: Optional[str] = Query(None, max_length=300),
+                    stop_name: Optional[str] = Query(None, max_length=200),
+                    at: Optional[str] = Query(None, max_length=40)) -> dict:
+    found = await live_transit.trip(trip_id, stop_id=stop_id or None, stop_name=stop_name or None, at=at or None)
+    if found is None:
+        return {"trip_id": trip_id, "stops": [], "vehicle": None, "path": [], "your_stop": None,
+                "message": "We can't find this trip right now. It may have finished, or live data is unavailable."}
+    return found
 
 
 @router.get("/v2/transit/live/vehicles")

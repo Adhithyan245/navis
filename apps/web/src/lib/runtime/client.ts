@@ -25,7 +25,7 @@ import {
   type RuntimeEvent,
 } from "./events";
 import type { CareResponse, NearbyResponse, PlaceDetailsResponse, RouteResponse, TravelMode } from "@/lib/maps/types";
-import type { LiveBoardsResponse, LiveVehiclesResponse } from "@/lib/transit/live";
+import type { LiveBoardsResponse, LiveTrip, LiveVehiclesResponse, TrackTarget } from "@/lib/transit/live";
 import type {
   EventListing,
   EventsSearchParams,
@@ -364,6 +364,17 @@ export const runtimeClient = {
       max_lat: bounds.maxLat.toFixed(4), max_lon: bounds.maxLon.toFixed(4), zoom: String(Math.round(zoom)),
     });
     const response = await apiFetch(url(`/v2/transit/live/vehicles?${q.toString()}`), { headers: { Accept: "application/json" }, signal });
+    await requireOk(response);
+    return response.json();
+  },
+
+  /** GET /v2/transit/live/trip. One vehicle's position, stops ahead and ETA at the rider's stop. */
+  async liveTrip(target: TrackTarget, signal?: AbortSignal): Promise<LiveTrip> {
+    const q = new URLSearchParams({ trip_id: target.tripId });
+    if (target.stopId) q.set("stop_id", target.stopId);
+    if (target.stopName) q.set("stop_name", target.stopName);
+    if (target.at) q.set("at", target.at);
+    const response = await apiFetch(url(`/v2/transit/live/trip?${q.toString()}`), { headers: { Accept: "application/json" }, signal });
     await requireOk(response);
     return response.json();
   },

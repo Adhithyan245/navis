@@ -18,6 +18,7 @@ export interface LiveDeparture {
   cancelled: boolean;
   platform: string | null;
   route_url: string | null;
+  trip_id?: string | null;
 }
 
 export interface LiveStopBoard {
@@ -57,6 +58,64 @@ export interface LiveVehiclesResponse {
   server_time?: string;
   message: string | null;
   too_wide?: boolean;
+}
+
+export interface LiveTripStop {
+  name: string;
+  stop_id: string | null;
+  lat: number;
+  lon: number;
+  arrival: string;
+  departure: string;
+  scheduled: string | null;
+  delay_min: number | null;
+  cancelled: boolean;
+  passed: boolean;
+  minutes: number | null;
+  yours: boolean;
+}
+
+/** One vehicle's trip (GET /v2/transit/live/trip). `vehicle` is a moving
+ * segment to animate, or a fixed position while it waits at a stop. */
+export interface LiveTrip {
+  trip_id: string;
+  line?: string;
+  mode?: string;
+  headsign?: string | null;
+  color?: string;
+  text_color?: string | null;
+  agency?: string | null;
+  realtime?: boolean;
+  cancelled?: boolean;
+  stops: LiveTripStop[];
+  vehicle:
+    | { from: string; to: string; departure: string; arrival: string; path: [number, number][] }
+    | { position: [number, number]; at: string }
+    | null;
+  path: [number, number][];
+  your_stop: { name: string; arrival: string; delay_min: number | null; minutes: number | null; stops_away: number } | null;
+  server_time?: string;
+  message: string | null;
+}
+
+/** What to track: a trip, optionally from the rider's stop and departure. */
+export interface TrackTarget {
+  tripId: string;
+  stopId?: string | null;
+  stopName?: string | null;
+  at?: string | null;
+}
+
+export function trackHref(t: TrackTarget, near?: { lat: number; lon: number }): string {
+  const q = new URLSearchParams({ track: t.tripId, live: "1" });
+  if (t.stopId) q.set("stop_id", t.stopId);
+  if (t.stopName) q.set("stop_name", t.stopName);
+  if (t.at) q.set("at", t.at);
+  if (near) {
+    q.set("tlat", String(near.lat));
+    q.set("tlon", String(near.lon));
+  }
+  return `/maps?${q.toString()}`;
 }
 
 /** A vehicle segment prepared for fast interpolation. */

@@ -13,7 +13,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { SESSION_COOKIE, decodeSession } from "@/lib/auth/session";
 
-const PUBLIC_PATHS = new Set(["/", "/login", "/signup", "/privacy", "/terms", "/support", "/offline"]);
+const PUBLIC_PATHS = new Set(["/", "/login", "/signup", "/privacy", "/terms", "/disclaimer", "/support", "/offline"]);
 const AUTH_PAGES = new Set(["/login", "/signup"]);
 
 function apiOrigin(): string {

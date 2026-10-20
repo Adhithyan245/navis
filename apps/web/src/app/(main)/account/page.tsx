@@ -24,6 +24,8 @@ export default async function AccountPage() {
         {" · "}
         <Link href="/terms" className="text-indigo-600 hover:underline dark:text-indigo-400">terms</Link>
         {" · "}
+        <Link href="/disclaimer" className="text-indigo-600 hover:underline dark:text-indigo-400">disclaimer</Link>
+        {" · "}
         <Link href="/support" className="text-indigo-600 hover:underline dark:text-indigo-400">get help</Link>
       </p>
     </div>
