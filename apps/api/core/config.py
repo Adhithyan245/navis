@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import Optional
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve apps/api/.env from THIS FILE's location, not the CWD. Previously
@@ -81,6 +82,21 @@ class Settings(BaseSettings):
     # Resiliency
     GLOBAL_TIMEOUT: int = 10
     MAX_CONCURRENCY: int = 20
+
+    @field_validator("ACCOUNTS_DATABASE_URL", "REDIS_URL", mode="before")
+    @classmethod
+    def _clean_url(cls, value):
+        """Accept connection strings pasted straight from provider dashboards:
+        `REDIS_URL="rediss://..."`, `psql 'postgresql://...'`, stray quotes."""
+        if not isinstance(value, str):
+            return value
+        v = value.strip()
+        if v.lower().startswith("psql "):
+            v = v[5:].strip()
+        if "=" in v.split("://", 1)[0]:
+            v = v.split("=", 1)[1].strip()
+        v = v.strip("'\"").strip()
+        return v or None
 
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
