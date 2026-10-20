@@ -35,15 +35,12 @@ services:
         value: "1"
       - key: FORWARDED_ALLOW_IPS
         value: "*"
+      # External, free and persistent: Neon Postgres + Upstash Redis
+      # (Render's free Postgres is deleted after 30 days). Set in the dashboard.
       - key: ACCOUNTS_DATABASE_URL
-        fromDatabase:
-          name: navis-db
-          property: connectionString
+        sync: false
       - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: navis-cache
-          property: connectionString
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GEOAPIFY_API_KEY
