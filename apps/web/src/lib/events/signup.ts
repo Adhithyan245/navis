@@ -53,6 +53,7 @@ export function listingToSavedEvent(e: EventListing): SavedEvent {
     online: e.online,
     savedAt: 0,
     source: e.source,
+    listing: e as unknown as Record<string, unknown>,
   };
 }
 

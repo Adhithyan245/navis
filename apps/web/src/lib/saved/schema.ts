@@ -41,6 +41,8 @@ export interface SavedEvent {
   /** The user signed up / got tickets (confirmed by them after visiting the organiser's page). */
   signedUp?: boolean;
   signedUpAt?: number;      // Unix milliseconds
+  /** The full listing when they signed up, so its page still opens after the source drops it. */
+  listing?: Record<string, unknown>;
 }
 
 export interface SavedNeighborhood {

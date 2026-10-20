@@ -34,6 +34,7 @@ import {
   statusLabel,
 } from "@/lib/runtime/event-format";
 import { categoryLabel, type EventListing } from "@/lib/runtime/listings";
+import { useSavedItemsContext } from "@/lib/saved/context";
 import { googleMapsDirectionsUrl, googleMapsPlaceUrl, hasCoords } from "@/lib/runtime/maps";
 import { cn } from "@/lib/utils";
 
@@ -56,7 +57,12 @@ export default function EventDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const id = decodeId(params?.id);
-  const [state, setState] = useState<State>({ status: "loading" });
+  const [fetched, setState] = useState<State>({ status: "loading" });
+  // An event you signed up for keeps its page after the source stops listing it.
+  const { state: saved } = useSavedItemsContext();
+  const copy = saved.savedEvents.find((s) => s.id === id)?.listing as EventListing | undefined;
+  const fromCopy = fetched.status !== "done" && fetched.status !== "loading" && !!copy?.title;
+  const state: State = fromCopy ? { status: "done", event: copy! } : fetched;
 
   useEffect(() => {
     if (!id) return;
@@ -132,6 +138,13 @@ export default function EventDetailPage() {
   return (
     <article className="mx-auto flex max-w-4xl flex-col gap-6">
       {back}
+      {fromCopy && (
+        <p className="flex items-start gap-2 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] text-amber-900 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200">
+          <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+          The source no longer lists this event, so these are the details saved when you signed up. Check the
+          organiser&apos;s page for changes.
+        </p>
+      )}
 
       <div className="overflow-hidden rounded-3xl border border-zinc-200/80 bg-white/90 shadow-soft dark:border-white/[0.07] dark:bg-zinc-900/70">
         {e.image && (

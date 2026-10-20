@@ -479,6 +479,7 @@ async def _holidays(*, country_code: Optional[str], country: Optional[str],
 # ── Service ────────────────────────────────────────────────────────────────
 
 _CACHED_DETAIL_PREFIXES = {"luma", "devpost", "mlh", "devev"}
+_DETAIL_TTL_S = 14 * 24 * 3600
 
 
 def _dedupe(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -603,10 +604,11 @@ class EventsService:
                                                  category=category, others=conf_events + hol_events),
         }
         # Remember source events so their detail pages can be served
-        # (these sources have no per-event lookup endpoint we use).
+        # (these sources have no per-event lookup endpoint we use). Kept two
+        # weeks: people open them again from their events and reminders.
         for e in conf_events:
             if e["id"].split(":", 1)[0] in _CACHED_DETAIL_PREFIXES:
-                await cache.set(f"events.item:{e['id']}", e, ttl=12 * 3600)
+                await cache.set(f"events.item:{e['id']}", e, ttl=_DETAIL_TTL_S)
         # Only cache answers that found something; empty results are often
         # transient (rate limits, timeouts).
         if events:
