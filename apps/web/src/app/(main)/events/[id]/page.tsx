@@ -31,6 +31,7 @@ import {
   formatPrice,
   formatTime,
   longDate,
+  sourceName,
   statusLabel,
 } from "@/lib/runtime/event-format";
 import { categoryLabel, type EventListing } from "@/lib/runtime/listings";
@@ -338,7 +339,7 @@ export default function EventDetailPage() {
       </div>
 
       <p className="text-[11px] text-zinc-400">
-        Source: {e.source === "ticketmaster" ? "Ticketmaster" : e.source === "confs.tech" ? "confs.tech" : "Nager.Date public holidays"}.
+        Source: {sourceName(e.source)}.
         Details can change. Confirm with the organiser before you travel.
       </p>
     </article>

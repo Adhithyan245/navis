@@ -6,13 +6,14 @@
  * organiser link get a direct "I'm going". Signed up: a badge, add to
  * calendar, and undo.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CalendarPlus, Check, CircleCheck, ExternalLink, Ticket } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { canSignUp, downloadIcs, listingToSavedEvent, organiserSite, usesTickets } from "@/lib/events/signup";
 import type { EventListing } from "@/lib/runtime/listings";
 import { useSavedItemsContext } from "@/lib/saved/context";
+import { cn } from "@/lib/utils";
 
 const PENDING_KEY = "navis_signup_pending";
 
@@ -39,6 +40,26 @@ export function EventSignup({ event }: { event: EventListing }) {
   const signedUp = !!saved?.signedUp;
   // Survives a reload after coming back from the organiser's tab.
   const [asking, setAsking] = useState(() => typeof window !== "undefined" && readPending(event.id));
+
+  const promptRef = useRef<HTMLDivElement | null>(null);
+  const [nudge, setNudge] = useState(false);
+
+  // Coming back from the organiser's tab: put the question in front of them.
+  useEffect(() => {
+    if (!asking) return;
+    const onReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      promptRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setNudge(true);
+      setTimeout(() => setNudge(false), 1800);
+    };
+    document.addEventListener("visibilitychange", onReturn);
+    window.addEventListener("focus", onReturn);
+    return () => {
+      document.removeEventListener("visibilitychange", onReturn);
+      window.removeEventListener("focus", onReturn);
+    };
+  }, [asking]);
 
   const tickets = usesTickets(event);
   const site = organiserSite(event);
@@ -97,12 +118,23 @@ export function EventSignup({ event }: { event: EventListing }) {
 
   if (asking) {
     return (
-      <div className="flex w-full flex-col gap-3 rounded-2xl border border-indigo-200 bg-indigo-50/70 p-4 dark:border-indigo-400/25 dark:bg-indigo-500/10">
-        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+      <div
+        ref={promptRef}
+        role="alertdialog"
+        aria-label="Confirm sign-up"
+        className={cn(
+          "flex w-full flex-col gap-3 rounded-2xl border-2 border-indigo-400 bg-indigo-50 p-4 shadow-lg transition-shadow dark:border-indigo-400/60 dark:bg-indigo-500/15",
+          nudge && "ring-4 ring-indigo-300/70 dark:ring-indigo-400/40"
+        )}
+      >
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-300">
+          One more step
+        </p>
+        <p className="-mt-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">
           {tickets ? `Did you get your tickets on ${site}?` : `Did you finish signing up on ${site}?`}
         </p>
         <p className="text-[13px] text-zinc-600 dark:text-zinc-300">
-          We&apos;ll mark it on your account so you can find it later and get a reminder.
+          Tap yes and Navis marks it on your account, so it shows in My events and you get a reminder.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => confirm(true)}>
@@ -138,8 +170,7 @@ export function EventSignup({ event }: { event: EventListing }) {
       rel="noreferrer noopener"
       onClick={() => {
         writePending(event.id);
-        // Ask once they've had a moment on the organiser's page.
-        setTimeout(() => setAsking(true), 600);
+        setAsking(true);
       }}
     >
       <Button size="lg">

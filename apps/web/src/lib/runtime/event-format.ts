@@ -142,3 +142,18 @@ export function statusLabel(status: string | null): { label: string; tone: "warn
       return null;
   }
 }
+
+const SOURCE_NAMES: Record<string, string> = {
+  ticketmaster: "Ticketmaster",
+  luma: "Luma",
+  devpost: "Devpost",
+  mlh: "MLH",
+  devevents: "dev.events",
+  "confs.tech": "confs.tech",
+  "nager.date": "Nager.Date public holidays",
+};
+
+/** Display name of an events source ("luma" → "Luma"). */
+export function sourceName(source: string): string {
+  return SOURCE_NAMES[source] ?? source;
+}

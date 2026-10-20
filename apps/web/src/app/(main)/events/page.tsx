@@ -30,6 +30,7 @@ import {
 } from "@/lib/runtime/listings";
 import type { Location } from "@/lib/runtime/location";
 import { useProfileContext } from "@/lib/profile/context";
+import { sourceName } from "@/lib/runtime/event-format";
 import { useSavedItemsContext } from "@/lib/saved/context";
 import { cn } from "@/lib/utils";
 
@@ -369,19 +370,7 @@ function collapseSessions(events: EventsSearchResponse["events"]) {
   return out;
 }
 
-function sourceName(s: string): string {
-  return (
-    {
-      ticketmaster: "Ticketmaster",
-      luma: "Luma",
-      devpost: "Devpost",
-      mlh: "MLH",
-      devevents: "dev.events",
-      "confs.tech": "confs.tech",
-      "nager.date": "Nager.Date",
-    }[s] ?? s
-  );
-}
+
 
 function Chip({
   active,

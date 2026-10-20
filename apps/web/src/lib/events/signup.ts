@@ -11,7 +11,7 @@ const SITE_NAMES: Record<string, string> = {
   luma: "Luma",
   devpost: "Devpost",
   mlh: "MLH",
-  "dev.events": "dev.events",
+  devevents: "dev.events",
   "confs.tech": "the conference website",
 };
 
