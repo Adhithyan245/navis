@@ -2,7 +2,10 @@
 /**
  * "Continue with Apple / Google". On the web these are plain links to the
  * OAuth routes; inside the native app they open the system browser and
- * hand the session back (lib/native.ts).
+ * hand the session back (lib/native.ts). A provider without its keys on
+ * the server shows as "Coming soon" and can't be pressed; adding the keys
+ * (GOOGLE_CLIENT_ID/SECRET, APPLE_CLIENT_ID/TEAM_ID/KEY_ID/PRIVATE_KEY)
+ * turns it on with no code change.
  */
 import { isNativeApp, nativeOAuth } from "@/lib/native";
 
@@ -17,33 +20,64 @@ function onNative(provider: "google" | "apple", next: string) {
   };
 }
 
+function Provider({
+  provider,
+  enabled,
+  next,
+  label,
+  mark,
+  liveClass,
+}: {
+  provider: "google" | "apple";
+  enabled: boolean;
+  next: string;
+  label: string;
+  mark: React.ReactNode;
+  liveClass: string;
+}) {
+  if (!enabled) {
+    return (
+      <button
+        type="button"
+        disabled
+        aria-label={`${label} (coming soon)`}
+        className={`${BASE} cursor-not-allowed border-zinc-200 bg-zinc-50 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-500`}
+      >
+        <span className="opacity-60">{mark}</span>
+        {label}
+        <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          Coming soon
+        </span>
+      </button>
+    );
+  }
+  return (
+    <a href={`/api/auth/${provider}?next=${encodeURIComponent(next)}`} onClick={onNative(provider, next)} className={`${BASE} ${liveClass}`}>
+      {mark}
+      {label}
+    </a>
+  );
+}
+
 export function SocialSignIn({ next, googleEnabled, appleEnabled }: { next: string; googleEnabled: boolean; appleEnabled: boolean }) {
-  const q = `?next=${encodeURIComponent(next)}`;
   return (
     <div className="flex flex-col gap-2.5">
-      {appleEnabled && (
-        <a
-          href={`/api/auth/apple${q}`}
-          onClick={onNative("apple", next)}
-          className={`${BASE} border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800 dark:border-white dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100`}
-        >
-          <AppleMark />
-          Continue with Apple
-        </a>
-      )}
-      <a
-        href={googleEnabled ? `/api/auth/google${q}` : undefined}
-        onClick={googleEnabled ? onNative("google", next) : undefined}
-        aria-disabled={!googleEnabled}
-        title={googleEnabled ? undefined : "Google sign-in isn't set up on this server yet"}
-        className={
-          `${BASE} border-zinc-200 bg-white text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 ` +
-          (googleEnabled ? "hover:bg-zinc-50 dark:hover:bg-zinc-800" : "cursor-not-allowed opacity-50")
-        }
-      >
-        <GoogleMark />
-        Continue with Google
-      </a>
+      <Provider
+        provider="apple"
+        enabled={appleEnabled}
+        next={next}
+        label="Continue with Apple"
+        mark={<AppleMark />}
+        liveClass="border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800 dark:border-white dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100"
+      />
+      <Provider
+        provider="google"
+        enabled={googleEnabled}
+        next={next}
+        label="Continue with Google"
+        mark={<GoogleMark />}
+        liveClass="border-zinc-200 bg-white text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+      />
     </div>
   );
 }

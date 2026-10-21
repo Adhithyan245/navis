@@ -6,12 +6,12 @@ import { safeNext } from "@/lib/auth/session";
 export const metadata = { title: "Sign in" };
 
 const ERRORS: Record<string, string> = {
-  google_unavailable: "Google sign-in isn't set up on this server yet. Use email for now.",
+  google_unavailable: "Sign in with Google is coming soon. Use email for now.",
   google_cancelled: "Google sign-in was cancelled.",
   google_state: "That sign-in link expired. Please try again.",
   google_failed: "We couldn't sign you in with Google. Please try again.",
   google_unverified: "Your Google email isn't verified, so we can't link it to your existing account.",
-  apple_unavailable: "Sign in with Apple isn't set up on this server yet. Use email for now.",
+  apple_unavailable: "Sign in with Apple is coming soon. Use email for now.",
   apple_cancelled: "Sign in with Apple was cancelled.",
   apple_state: "That sign-in link expired. Please try again.",
   apple_failed: "We couldn't sign you in with Apple. Please try again.",
