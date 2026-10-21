@@ -162,3 +162,71 @@ def test_geocode_route_accepts_bias_params():
     kwargs = mock.call_args.kwargs
     assert kwargs["bias_lat"] == 42.36 and kwargs["bias_lon"] == -71.06
     assert kwargs["city"] == "Boston"
+
+
+# ── Photon: the city's own areas; the world's best match kept ──────────────
+
+def _with_photon(svc, *, local=(), world=()):
+    async def fake(text, *, limit, bias):
+        return list(local if bias is not None else world)
+    svc._photon_forward = AsyncMock(side_effect=fake)
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_photon_brings_local_areas_ahead_of_same_named_towns():
+    towns = [_loc("Roxbury", 41.66, -73.31, type_="city", label="Roxbury, CT"),
+             _loc("Roxbury", 43.82, -72.73, type_="city", label="Roxbury, VT"),
+             _loc("Roxbury", 43.83, -72.72, type_="city", label="Roxbury, Roxbury, VT")]   # same town twice
+    local = [_loc("Roxbury Crossing", 42.331, -71.095, provider="photon", type_="landmark", conf=0.81),
+             _loc("Roxbury Street", 42.33, -71.09, provider="photon", type_="street", conf=0.85),
+             _loc("Roxbury", 42.325, -71.084, provider="photon", type_="suburb", conf=0.77)]
+    svc = _with_photon(_service(geo=await _geo({"roxbury": towns})), local=local)
+    out = await svc._forward("roxbury", limit=10, autocomplete=False, bias=BOSTON)
+    names = [(o.name, o.label) for o in out]
+    assert names[0] == ("Roxbury", "Roxbury")                      # Boston's Roxbury, the area, first
+    assert out.index(next(o for o in out if o.name == "Roxbury Crossing")) < \
+        out.index(next(o for o in out if o.name == "Roxbury Street"))   # areas/places over streets
+    assert len([o for o in out if o.label.startswith("Roxbury, ") and "VT" in o.label]) == 1   # VT twins merged
+    assert any(o.label == "Roxbury, CT" for o in out)              # far towns still listed
+
+
+@pytest.mark.asyncio
+async def test_world_match_kept_and_first_when_nothing_local_has_that_name():
+    streets = [_loc(f"Paris Street {i}", 42.37 + i / 1000, -71.03, provider="photon", type_="street", conf=0.85)
+               for i in range(9)]
+    paris = _loc("Paris", 48.857, 2.352, provider="photon", type_="city", conf=0.85)
+    svc = _with_photon(_service(), local=streets, world=[paris])
+    out = await svc._forward("paris", limit=5, autocomplete=False, bias=BOSTON)
+    assert out[0].name == "Paris" and len(out) == 5
+
+
+@pytest.mark.asyncio
+async def test_world_match_does_not_jump_a_local_area_of_that_name():
+    jp = _loc("Jamaica Plain", 42.31, -71.11, type_="suburb")
+    local_area = _loc("Jamaica", 42.31, -71.11, provider="photon", type_="suburb", conf=0.8)
+    country = _loc("Jamaica", 18.1, -77.3, provider="photon", type_="country", conf=0.85)
+    svc = _with_photon(_service(geo=await _geo({"jamaica": [jp]})), local=[local_area], world=[country])
+    out = await svc._forward("jamaica", limit=5, autocomplete=False, bias=BOSTON)
+    assert out[0].lat == pytest.approx(42.31) and any(o.type == "country" for o in out)
+
+
+@pytest.mark.asyncio
+async def test_no_photon_without_bias():
+    svc = _with_photon(_service(geo=await _geo({"roxbury": [_loc("Roxbury", 41.66, -73.31, type_="city")]})))
+    await svc._forward("roxbury", limit=5, autocomplete=False, bias=None)
+    svc._photon_forward.assert_not_awaited()
+
+
+def test_photon_feature_mapping():
+    f = {"geometry": {"coordinates": [-71.095, 42.331]},
+         "properties": {"name": "Roxbury Crossing", "osm_key": "railway", "osm_value": "station", "osm_type": "N",
+                        "osm_id": 1, "locality": "Mission Hill", "city": "Boston", "state": "Massachusetts",
+                        "postcode": "02120", "country": "United States", "countrycode": "us"}}
+    loc = G._from_photon(f, 0)
+    assert loc.type == "landmark" and loc.city == "Boston" and loc.country_code == "US"
+    assert loc.label == "Roxbury Crossing, Mission Hill, Boston, Massachusetts 02120, United States"
+    area = G._from_photon({"geometry": {"coordinates": [-71.08, 42.32]},
+                           "properties": {"name": "Roxbury", "osm_key": "place", "osm_value": "suburb", "city": "Boston"}}, 2)
+    assert area.type == "suburb" and area.confidence < loc.confidence
+    assert G._from_photon({"geometry": {"coordinates": []}, "properties": {"name": "x"}}, 0) is None

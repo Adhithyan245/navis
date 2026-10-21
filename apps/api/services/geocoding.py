@@ -11,6 +11,9 @@ Forward search (Google-Maps-like):
      biased toward the user's city when `bias_lat/bias_lon` are given.
   3. Nominatim with a local viewbox when results are weak or the query is
      an acronym — OSM short names resolve "MIT", "BU", "Logan".
+     With a bias, Photon too: it surfaces the city's own neighbourhoods,
+     stations and parks ("roxbury" → Roxbury, Roxbury Crossing) that
+     same-named towns elsewhere would otherwise crowd out.
   4. For acronyms still unresolved, a fast LLM expands the token in the
      user's city context ("NEU" → "Northeastern University").
   5. Merge, dedupe, and rank by provider confidence + distance to the bias.
@@ -179,6 +182,10 @@ def _norm_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
 
 
+_TOWN_TYPES = {"city", "county"}
+_AREA_TYPES = {"suburb", "neighborhood", "district"}
+
+
 def _dedup_locations(locs: List["Location"], *, area_radius_m: float = 350.0) -> List["Location"]:
     """
     Deduplicate by provider id, then by (normalized name + proximity): two
@@ -197,8 +204,17 @@ def _dedup_locations(locs: List["Location"], *, area_radius_m: float = 350.0) ->
         dup = False
         for k in kept:
             radius = 350.0 if loc.type in ("address", "street") else max(350.0, area_radius_m)
+            places = _TOWN_TYPES | _AREA_TYPES
+            if loc.type in places and k.type in places and (loc.type in _TOWN_TYPES or k.type in _TOWN_TYPES):
+                # A town and its village centre ("Roxbury" / "Roxbury, Roxbury"),
+                # or one city typed differently by two providers.
+                radius = max(radius, 15_000.0)
+            elif loc.type in _AREA_TYPES and k.type in _AREA_TYPES:
+                radius = max(radius, 3_000.0)
             if _norm_name(k.name) == name and _haversine_m(k.lat, k.lon, loc.lat, loc.lon) <= radius:
                 dup = True
+                # The kept copy inherits what the others knew ("prominent", "expanded").
+                k.tags = list(dict.fromkeys([*k.tags, *loc.tags]))
                 break
         if dup:
             continue
@@ -288,7 +304,15 @@ class GeocodingService:
     ) -> List["Location"]:
         query = normalize_query(text) or text
         acronym = looks_like_acronym(text)
-        fetch = max(limit, 5)
+        fetch = max(limit, 8)
+        photon_task = prominent_task = None
+        if bias is not None:
+            photon_task = asyncio.create_task(_with_timeout(self._photon_forward(query, limit=fetch, bias=bias),
+                                                            _PHOTON_TIMEOUT_S))
+            # Unbiased, the world's best matches ("paris" → Paris, France), so
+            # local streets can't push them off the list.
+            prominent_task = asyncio.create_task(_with_timeout(self._photon_forward(query, limit=3, bias=None),
+                                                               _PHOTON_TIMEOUT_S))
 
         # Typed-in-capitals acronyms ("NEU") always need OSM + expansion, so
         # start those right away instead of after Geoapify answers.
@@ -310,6 +334,13 @@ class GeocodingService:
             calls = [_with_timeout(c, _ACRONYM_GEOAPIFY_TIMEOUT_S) for c in calls]
         batches = await asyncio.gather(*calls)
         results: List["Location"] = [loc for batch in batches for loc in batch]
+        prominent: List["Location"] = []
+        if photon_task is not None:
+            results += await photon_task
+            prominent = await prominent_task
+            for loc in prominent:
+                loc.tags = list(dict.fromkeys([*loc.tags, "prominent"]))
+            results += prominent
 
         # OSM knows aliases (short_name "MIT", alt_name "Southie") that
         # Geoapify's index doesn't; ask it when nothing matched by name.
@@ -344,7 +375,37 @@ class GeocodingService:
                       if not (_norm_name(r.name) == _norm_name(top[0].name)
                               and _haversine_m(r.lat, r.lon, top[0].lat, top[0].lon) <= 2000.0)]
             ranked = top + [r for r in ranked if r.id != top[0].id]
-        return ranked[:limit]
+        return self._keep_prominent(ranked, bias=bias, query=query, limit=limit)
+
+    @staticmethod
+    def _keep_prominent(ranked: List["Location"], *, bias: Optional[tuple], query: str, limit: int) -> List["Location"]:
+        """With a bias, local results win the ranking, but a far place named
+        exactly like the query still belongs on the list (two slots). It goes
+        first when nothing nearby is an area or town by that name."""
+        if bias is None:
+            return ranked[:limit]
+        q = _norm_name(query)
+
+        def far(r: "Location") -> bool:
+            return _haversine_m(bias[0], bias[1], r.lat, r.lon) > 150_000
+
+        exact_far = [r for r in ranked if _norm_name(r.name) == q and far(r)]
+        # A country or region by that name first ("jamaica"), then what's
+        # prominent worldwide, then provider confidence.
+        exact_far.sort(key=lambda r: ({"country": 0, "region": 1}.get(r.type, 2),
+                                      "prominent" not in r.tags, -float(r.confidence or 0.0)))
+        picks = exact_far[:2]
+        if not picks:
+            return ranked[:limit]
+        local_named = any(not far(r) and (q in _alias_names(r) or (
+                              _norm_name(r.name) == q and r.type in _AREA_TYPES | _TOWN_TYPES | {"landmark"}))
+                          for r in ranked)
+        rest = [r for r in ranked if r not in picks][: limit - len(picks)]
+        if local_named:
+            # Keep the ranking's order; the picks only reclaim their places.
+            keep = {id(r) for r in rest + picks}
+            return [r for r in ranked if id(r) in keep][:limit]
+        return picks + rest
 
     @staticmethod
     def _weak(results: List["Location"], bias: Optional[tuple]) -> bool:
@@ -392,7 +453,18 @@ class GeocodingService:
                 # in two suburbs 10 km apart).
                 s += 0.2 * (1.0 - min(d, 50_000.0) / 50_000.0)
             name = _norm_name(loc.name)
-            if q and (name == q or (loc.type in ("address", "street")
+            # A neighbourhood or town is usually what a short query means;
+            # a street that merely starts with it is a weaker guess.
+            if loc.type in _AREA_TYPES:
+                s += 0.3
+            elif loc.type in _TOWN_TYPES:
+                s += 0.15
+            elif loc.type in ("street", "address") and name != q:
+                s -= 0.15
+            # "12 Westland Ave" → that street's addresses; a one-word name
+            # ("roxbury") shouldn't make every Roxbury Street an exact match.
+            addressy = any(ch.isdigit() for ch in q) or " " in q
+            if q and (name == q or (loc.type in ("address", "street") and addressy
                                      and _norm_name(loc.label).startswith(q))):
                 s += 0.6
             elif q and name.startswith(q):
@@ -754,6 +826,28 @@ class GeocodingService:
         return out
 
 
+    async def _photon_forward(self, text: str, *, limit: int, bias: Optional[tuple]) -> List["Location"]:
+        """Photon, location-biased: the city's own areas and places first."""
+        params: Dict[str, Any] = {"q": text, "limit": str(min(limit, 15)), "lang": "en"}
+        if bias is not None:
+            params.update({"lat": str(bias[0]), "lon": str(bias[1]), "location_bias_scale": "0.3"})
+        try:
+            async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+                async with session.get(f"{settings.PHOTON_URL}/api/", params=params, headers=_PHOTON_HEADERS) as resp:
+                    if resp.status != 200:
+                        logger.info("geocode.photon.bad_status", status=resp.status)
+                        return []
+                    data = await resp.json(content_type=None)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("geocode.photon.error", error=type(exc).__name__)
+            return []
+        out: List["Location"] = []
+        for i, feature in enumerate((data or {}).get("features") or []):
+            loc = _from_photon(feature, i)
+            if loc:
+                out.append(loc)
+        return out
+
     async def _nominatim_forward(
         self, text: str, *, limit: int, bias: Optional[tuple] = None
     ) -> List["Location"]:
@@ -864,6 +958,78 @@ class GeocodingService:
 
 
 _ACRONYM_GEOAPIFY_TIMEOUT_S = 2.5
+_PHOTON_TIMEOUT_S = 2.5
+_PHOTON_HEADERS = {"User-Agent": "Navis/1.0 (city companion; geocoding)"}
+
+# Photon `osm_key=place` values → Location types.
+_PHOTON_PLACE = {
+    "suburb": "suburb", "quarter": "suburb", "borough": "suburb", "city_district": "district",
+    "neighbourhood": "neighborhood", "locality": "neighborhood", "isolated_dwelling": "neighborhood",
+    "city": "city", "town": "city", "village": "city", "hamlet": "city", "municipality": "city",
+    "county": "county", "state": "region", "region": "region", "province": "region", "country": "country",
+}
+_PHOTON_ADMIN = {"city": "city", "district": "district", "county": "county", "state": "region", "country": "country"}
+
+
+def _photon_type(p: Dict[str, Any]) -> str:
+    key, value, kind = p.get("osm_key"), p.get("osm_value"), p.get("type")
+    if key == "place":
+        # Islands, archipelagos and the like: a place, not a neighbourhood.
+        return _PHOTON_PLACE.get(str(value), "landmark")
+    if key == "boundary":
+        return _PHOTON_ADMIN.get(str(kind), "district")
+    if p.get("housenumber"):
+        return "address"
+    if key == "highway":
+        return "street"
+    if value == "postcode" or kind == "postcode":
+        return "postcode"
+    return "landmark"
+
+
+def _from_photon(feature: Dict[str, Any], rank: int) -> Optional["Location"]:
+    from apps.api.models.location import Location
+
+    p = feature.get("properties") or {}
+    coords = (feature.get("geometry") or {}).get("coordinates") or []
+    if len(coords) != 2 or not p.get("name") and not p.get("street"):
+        return None
+    lon, lat = _coerce_float(coords[0]), _coerce_float(coords[1])
+    if lat is None or lon is None:
+        return None
+    ctype = _photon_type(p)
+    name = str(p.get("name") or f"{p.get('housenumber', '')} {p.get('street', '')}".strip())
+    city = p.get("city") or (p.get("name") if ctype == "city" else None)
+    parts: List[str] = []
+    for part in (name, p.get("locality"), p.get("district"), city, p.get("county") if not city else None,
+                 " ".join(x for x in (p.get("state"), p.get("postcode")) if x) or None, p.get("country")):
+        if part and part not in parts:
+            parts.append(str(part))
+    ext = p.get("extent")  # [minLon, maxLat, maxLon, minLat]
+    box = [ext[0], ext[3], ext[2], ext[1]] if isinstance(ext, list) and len(ext) == 4 else None
+    return Location(
+        id=f"photon:{p.get('osm_type', '')}{p.get('osm_id', f'{lat},{lon}')}",
+        type=ctype,
+        name=name,
+        label=", ".join(parts),
+        lat=lat,
+        lon=lon,
+        bbox=box,
+        country=p.get("country"),
+        country_code=(str(p["countrycode"]).upper() if p.get("countrycode") else None),
+        region=p.get("state"),
+        city=city,
+        district=p.get("district"),
+        suburb=p.get("locality") if ctype not in ("suburb", "neighborhood") else name,
+        postcode=p.get("postcode"),
+        provider="photon",
+        # Photon returns results best-first without a score.
+        confidence=max(0.4, 0.85 - 0.04 * rank),
+        state=p.get("state"),
+        short_description=", ".join(parts[1:]) or None,
+        tags=[t for t in {ctype, p.get("osm_key"), p.get("osm_value")} if isinstance(t, str) and t],
+        raw={"osm_key": p.get("osm_key"), "osm_value": p.get("osm_value")},
+    )
 
 
 async def _with_timeout(coro, timeout_s: float) -> List["Location"]:

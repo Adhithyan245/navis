@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # point at your own Nominatim and set the interval to 0 to scale.
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org"
     NOMINATIM_MIN_INTERVAL_S: float = 1.05
+    # Photon (OSM search built for type-ahead): finds neighbourhoods, stations
+    # and parks near the user's city that the other providers rank away.
+    PHOTON_URL: str = "https://photon.komoot.io"
     # Public transit routing (MOTIS / Transitous-compatible API).
     TRANSIT_ROUTING_URL: str = "https://api.transitous.org"
 

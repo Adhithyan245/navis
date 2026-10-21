@@ -12,17 +12,30 @@
  * dropdown.
  *
  * Pass `near` (the user's city) to rank nearby matches first and let the
- * backend expand local abbreviations ("NEU", "JP", "Kendall Sq").
+ * backend expand local abbreviations ("NEU", "JP", "Kendall Sq"). Without
+ * it, the visitor's approximate city (lib/runtime/approx-location) is used.
+ *
+ * The suggestion list is drawn on top of the page (a portal, fixed under
+ * the input), so a dialog or card with overflow hidden can't clip it; it
+ * grows to the space between the input and the bottom of the screen (above
+ * the phone tab bar) and scrolls inside.
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, MapPin } from "lucide-react";
 
+import { approxLocation, type ApproxLocation } from "@/lib/runtime/approx-location";
 import { runtimeClient } from "@/lib/runtime/client";
 import type { Location } from "@/lib/runtime/location";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 300;
 const MIN_CHARS = 2;
+const RESULTS = 10;
+const MIN_LIST_PX = 220;
+// Room kept free under the list: the floating tab bar on phones, a margin elsewhere.
+const PHONE_BOTTOM_PX = 104;
+const DESKTOP_BOTTOM_PX = 16;
 
 const TYPE_LABELS: Record<string, string> = {
   country: "Country",
@@ -55,15 +68,29 @@ export function LocationSearch({
   className?: string;
   near?: Location | null;
 }) {
+  // No city given: rank near the visitor's approximate city instead.
+  const [approx, setApprox] = useState<ApproxLocation | null>(null);
+  useEffect(() => {
+    if (near) return;
+    let live = true;
+    void approxLocation().then((loc) => {
+      if (live) setApprox(loc);
+    });
+    return () => {
+      live = false;
+    };
+  }, [near]);
   // Primitive deps so a new-but-equal Location object doesn't re-search.
-  const nearLat = near?.lat;
-  const nearLon = near?.lon;
-  const nearCity = near?.city || near?.name || null;
+  const nearLat = near?.lat ?? approx?.lat;
+  const nearLon = near?.lon ?? approx?.lon;
+  const nearCity = near ? near.city || near.name || null : approx?.city ?? null;
   const [query, setQuery] = useState(value);
   const [results, setResults] = useState<Location[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
   // `committed` is the text we already resolved (external value or a picked
   // candidate). The debounce never re-searches it — that's what keeps a
   // selection from immediately firing another lookup.
@@ -93,7 +120,7 @@ export function LocationSearch({
       setLoading(true);
       runtimeClient
         .geocodeSearch(text, {
-          limit: 6,
+          limit: RESULTS,
           autocomplete: true,
           signal: controller.signal,
           near:
@@ -122,6 +149,40 @@ export function LocationSearch({
     return () => abortRef.current?.abort();
   }, []);
 
+  // Size the list to the room below the input; with too little room (input
+  // near the bottom), bring the input up first.
+  const fit = useCallback((scroll: boolean) => {
+    const box = boxRef.current;
+    if (!box) return;
+    // A dialog covers the tab bar, so only a margin is needed there.
+    const inDialog = !!box.closest('[aria-modal="true"]');
+    const bottomGap = window.innerWidth < 768 && !inDialog ? PHONE_BOTTOM_PX : DESKTOP_BOTTOM_PX;
+    let rect = box.getBoundingClientRect();
+    if (scroll && window.innerHeight - rect.bottom - bottomGap - 8 < MIN_LIST_PX) {
+      box.scrollIntoView({ block: "start", behavior: "auto" });
+      if (!inDialog) window.scrollBy(0, -80);       // clear the sticky header
+      rect = box.getBoundingClientRect();
+    }
+    const room = window.innerHeight - rect.bottom - bottomGap - 8;
+    setPos({ top: rect.bottom + 4, left: rect.left, width: rect.width, maxHeight: Math.max(MIN_LIST_PX, Math.floor(room)) });
+  }, []);
+
+  const showing = open && results.length > 0;
+  useEffect(() => {
+    if (!showing) return;
+    fit(true);
+    // Follow the input when the page, a dialog or the keyboard moves it.
+    const follow = () => fit(false);
+    window.addEventListener("resize", follow);
+    window.addEventListener("scroll", follow, true);
+    window.visualViewport?.addEventListener("resize", follow);
+    return () => {
+      window.removeEventListener("resize", follow);
+      window.removeEventListener("scroll", follow, true);
+      window.visualViewport?.removeEventListener("resize", follow);
+    };
+  }, [showing, fit]);
+
   const select = (loc: Location) => {
     setCommitted(loc.label);
     setQuery(loc.label);
@@ -132,7 +193,7 @@ export function LocationSearch({
 
   return (
     <div className={cn("relative", className)}>
-      <div className="relative">
+      <div className="relative" ref={boxRef}>
         <input
           autoFocus={autoFocus}
           type="text"
@@ -156,10 +217,14 @@ export function LocationSearch({
         )}
       </div>
 
-      {open && results.length > 0 && (
-        <ul className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+      {showing && pos && createPortal(
+        <ul
+          role="listbox"
+          style={{ top: pos.top, left: pos.left, width: pos.width, maxHeight: pos.maxHeight }}
+          className="fixed z-[200] overflow-y-auto overscroll-contain rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+        >
           {results.map((loc) => (
-            <li key={loc.id}>
+            <li key={loc.id} role="option" aria-selected={false}>
               <button
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
@@ -178,7 +243,8 @@ export function LocationSearch({
               </button>
             </li>
           ))}
-        </ul>
+        </ul>,
+        document.body
       )}
     </div>
   );
